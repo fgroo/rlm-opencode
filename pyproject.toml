@@ -1,0 +1,25 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "rlm-opencode"
+version = "0.1.0"
+description = "True RLM implementation with tool-based context access for OpenCode"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn>=0.30.0",
+    "httpx>=0.27.0",
+    "pydantic>=2.0.0",
+    "rich>=13.0.0",
+    "typer>=0.12.0",
+]
+
+[project.scripts]
+rlm-opencode = "rlm_opencode.cli:app"
+rlm-opencode-setup = "rlm_opencode.setup:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/rlm_opencode"]
