@@ -50,8 +50,8 @@ def status():
     # Check multiple servers
     servers = [
         ("RLM-Server", 8765),
-        ("RLM-Session (Proxy)", 8767),
-        ("RLM-Session (Native)", 8768),
+        ("RLM-OpenCode (Proxy)", 8767),
+        ("RLM-OpenCode (Native)", 8768),
     ]
     
     console.print("[bold]Servers:[/bold]")
@@ -108,7 +108,7 @@ def log(
     lines: int = typer.Option(50, "--lines", "-n", help="Number of lines to show"),
     native: bool = typer.Option(False, "--native", "-N", help="View native server log (default: proxy)"),
 ):
-    """View RLM-Session activity log.
+    """View RLM-OpenCode activity log.
     
     Examples:
         rlm-opencode log              # Last 50 lines of proxy log (parsed)

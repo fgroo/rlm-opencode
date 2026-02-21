@@ -46,7 +46,7 @@ class ProviderRegistry:
         
         for provider_id, provider_config in providers_config.items():
             # Skip RLM providers (avoid recursion)
-            if provider_id in ("rlm", "rlm-session", "rlm-native"):
+            if provider_id in ("rlm", "rlm-opencode", "rlm-native"):
                 continue
             
             # Create appropriate provider type
@@ -74,7 +74,7 @@ class ProviderRegistry:
             
             for model_id in models:
                 # Skip RLM models (avoid recursion)
-                if model_id.startswith("rlm/") or model_id.startswith("rlm-session/"):
+                if model_id.startswith("rlm/") or model_id.startswith("rlm-opencode/"):
                     continue
                 
                 # Parse provider/model format

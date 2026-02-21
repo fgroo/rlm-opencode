@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """RLM Session Setup Script for OpenCode integration.
 
-This script adds RLM-Session-wrapped versions of all your opencode models.
-RLM-Session provides 40M+ character context for agentic workflows.
+This script adds RLM-OpenCode-wrapped versions of all your opencode models.
+RLM-OpenCode provides 40M+ character context for agentic workflows.
 
 Usage:
     rlm-opencode-setup install           # Default mode (port 8769)
@@ -17,7 +17,7 @@ Modes:
     Proxy mode (default): Wraps opencode run for context management
     Native mode (--native): Calls model APIs directly, no proxy
 
-The RLM-Session server must be running for models to work.
+The RLM-OpenCode server must be running for models to work.
 """
 
 import json
@@ -77,7 +77,7 @@ def save_config(config):
 
 
 def is_server_running(native: bool = False):
-    """Check if RLM-Session server is running."""
+    """Check if RLM-OpenCode server is running."""
     port = 8769
     try:
         response = httpx.get(f"http://localhost:{port}/health", timeout=2)
@@ -109,7 +109,7 @@ def get_mode_settings(native: bool = False) -> dict:
         "provider_id": PROXY_PROVIDER_ID,
         "url": PROXY_URL,
         "port": 8769,
-        "name": "RLM-Session (proxy, context management)",
+        "name": "RLM-OpenCode (proxy, context management)",
         "description": "Proxy mode wraps opencode run for context accumulation.",
     }
 
@@ -157,16 +157,16 @@ def create_rlm_model_entry(model_id: str, config_key: str, original_info: dict |
 
 
 def install(native: bool = False):
-    """Install RLM-Session provider with all models."""
+    """Install RLM-OpenCode provider with all models."""
     mode = get_mode_settings(native)
     
     print("=" * 60)
-    print(f"RLM-Session Setup - Installing ({'Native' if native else 'Proxy'} Mode)")
+    print(f"RLM-OpenCode Setup - Installing ({'Native' if native else 'Proxy'} Mode)")
     print("=" * 60)
     print()
     
     if not is_server_running(native):
-        print(f"RLM-Session server is NOT RUNNING on port {mode['port']}")
+        print(f"RLM-OpenCode server is NOT RUNNING on port {mode['port']}")
         print()
         print("Starting server...")
         if native:
@@ -261,7 +261,7 @@ def uninstall(native: bool = False):
     mode = get_mode_settings(native)
     
     print("=" * 60)
-    print(f"RLM-Session Setup - Uninstalling ({'Native' if native else 'Proxy'} Mode)")
+    print(f"RLM-OpenCode Setup - Uninstalling ({'Native' if native else 'Proxy'} Mode)")
     print("=" * 60)
     print()
     
@@ -287,9 +287,9 @@ def uninstall(native: bool = False):
 
 
 def status():
-    """Check RLM-Session status."""
+    """Check RLM-OpenCode status."""
     print("=" * 60)
-    print("RLM-Session Setup - Status")
+    print("RLM-OpenCode Setup - Status")
     print("=" * 60)
     print()
     
@@ -299,8 +299,8 @@ def status():
     # Check servers
     print("Servers:")
     for name, port, native in [
-        ("RLM-Session (Proxy)", 8767, False),
-        ("RLM-Session (Native)", 8768, True),
+        ("RLM-OpenCode (Proxy)", 8767, False),
+        ("RLM-OpenCode (Native)", 8768, True),
         ("RLM-Server", 8765, None),
     ]:
         if native is None:
@@ -362,7 +362,7 @@ def status():
 
 
 def serve(native: bool = False):
-    """Start the RLM-Session server."""
+    """Start the RLM-OpenCode server."""
     mode = get_mode_settings(native)
     
     if is_server_running(native):
@@ -376,7 +376,7 @@ def serve(native: bool = False):
             pass
         return 0
     
-    print(f"Starting RLM-Session server ({'Native' if native else 'Proxy'} mode)...")
+    print(f"Starting RLM-OpenCode server ({'Native' if native else 'Proxy'} mode)...")
     
     log_file = f"/tmp/rlm-{'native' if native else 'session'}.log"
     cmd = f"nohup rlm-opencode serve{' --native' if native else ''} > {log_file} 2>&1 &"

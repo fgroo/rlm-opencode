@@ -121,14 +121,13 @@ class BaseProvider(ABC):
         return "".join(result)
     
     def _get_api_key(self) -> str | None:
-        """Get API key from config, environment, or opencode MCP config.
+        """Get API key dynamically from config, environment, or opencode.json.
         
-        Checks:
-        1. RLM config file (~/.config/rlm-session/config.json)
-        2. opencode.json MCP configs (zai-mcp-server has Z_AI_API_KEY)
-        3. config["options"]["apiKey"]
-        4. config["options"]["headers"]["Authorization"] (Bearer token)
-        5. Environment variable based on provider
+        Searches:
+        1. Direct config options (apiKey / Authorization header)
+        2. All provider configs in opencode.json (match by provider_id or baseURL)
+        3. MCP server environment variables in opencode.json
+        4. Environment variables
         """
         import os
         from pathlib import Path
@@ -136,75 +135,65 @@ class BaseProvider(ABC):
         
         opencode_config_path = Path.home() / ".config" / "opencode" / "opencode.json"
         
-        # 1. Check RLM config file
-        rlm_config_path = Path.home() / ".config" / "rlm-session" / "config.json"
-        if rlm_config_path.exists():
-            try:
-                with open(rlm_config_path) as f:
-                    rlm_config = json.load(f)
-                api_keys = rlm_config.get("api_keys", {})
-                if self.provider_id in api_keys:
-                    return api_keys[self.provider_id]
-            except:
-                pass
-        
-        # 2. Check opencode.json MCP configs for API keys
-        if opencode_config_path.exists():
-            try:
-                with open(opencode_config_path) as f:
-                    oc_config = json.load(f)
-                
-                mcp = oc_config.get("mcp", {})
-                
-                # Provider -> MCP server mappings
-                mcp_mappings = {
-                    "rlm-internal": "zai-mcp-server",
-                    "zai-coding-plan": "zai-mcp-server",
-                    "zhipu": "zai-mcp-server",
-                }
-                
-                mcp_server = mcp_mappings.get(self.provider_id.lower())
-                if mcp_server and mcp_server in mcp:
-                    server_config = mcp[mcp_server]
-                    env = server_config.get("environment", {})
-                    # Check for Z_AI_API_KEY or similar
-                    for key in ["Z_AI_API_KEY", "API_KEY", f"{self.provider_id.upper()}_API_KEY"]:
-                        if key in env:
-                            return env[key]
-            except:
-                pass
-        
+        # 1. Direct config options
         options = self.config.get("options", {})
-        
-        # 3. Direct apiKey in config
         if "apiKey" in options:
             return options["apiKey"]
         
-        # 4. Bearer token in headers
         headers = options.get("headers", {})
         auth = headers.get("Authorization", "")
         if auth.startswith("Bearer "):
             return auth[7:]
         
-        # 5. Environment variables
-        provider_env = {
-            "openai": "OPENAI_API_KEY",
-            "anthropic": "ANTHROPIC_API_KEY",
-            "openrouter": "OPENROUTER_API_KEY",
-            "zhipu": "ZHIPU_API_KEY",
-            "rlm-internal": "Z_AI_API_KEY",
-            "zai-coding-plan": "Z_AI_API_KEY",
-            "google": "GOOGLE_API_KEY",
-        }
+        # 2. Search opencode.json providers for API key
+        if opencode_config_path.exists():
+            try:
+                with open(opencode_config_path) as f:
+                    oc_config = json.load(f)
+                
+                providers = oc_config.get("provider", {})
+                
+                # Direct match by provider_id
+                if self.provider_id in providers:
+                    prov_opts = providers[self.provider_id].get("options", {})
+                    if "apiKey" in prov_opts:
+                        return prov_opts["apiKey"]
+                    prov_auth = prov_opts.get("headers", {}).get("Authorization", "")
+                    if prov_auth.startswith("Bearer "):
+                        return prov_auth[7:]
+                
+                # If we have a baseURL, find any provider with the same baseURL
+                if self.base_url:
+                    for prov_id, prov_config in providers.items():
+                        prov_url = prov_config.get("options", {}).get("baseURL", "")
+                        if prov_url and prov_url == self.base_url:
+                            prov_opts = prov_config.get("options", {})
+                            if "apiKey" in prov_opts:
+                                return prov_opts["apiKey"]
+                            prov_auth = prov_opts.get("headers", {}).get("Authorization", "")
+                            if prov_auth.startswith("Bearer "):
+                                return prov_auth[7:]
+                
+                # Search all MCP server environment variables
+                mcp = oc_config.get("mcp", {})
+                for server_name, server_config in mcp.items():
+                    env = server_config.get("environment", {})
+                    for env_key, env_val in env.items():
+                        if env_key.endswith("_API_KEY") and env_val:
+                            # Check if this MCP key matches our provider
+                            provider_upper = self.provider_id.upper().replace("-", "_")
+                            if provider_upper in env_key or env_key == "API_KEY":
+                                return env_val
+                
+            except Exception:
+                pass
         
+        # 3. Environment variables
         env_patterns = [
-            f"{self.provider_id.upper()}_API_KEY",
             f"{self.provider_id.upper().replace('-', '_')}_API_KEY",
             f"{self.provider_id.upper().replace('.', '_')}_API_KEY",
+            f"{self.provider_id.upper()}_API_KEY",
         ]
-        
-        if self.provider_id.lower() in provider_env:
-            env_patterns.insert(0, provider_env[self.provider_id.lower()])
         
         for pattern in env_patterns:
             key = os.environ.get(pattern)
