@@ -1,33 +1,39 @@
-"""Session management for RLM Session Server.
+"""Session management for RLM-OpenCode.
 
-Handles:
-- Session creation and lifecycle
-- Context accumulation (file reads, commands, etc.)
-- Session persistence and restoration
+Enhanced session system with:
+- Incognito mode (no persistence)
+- OpenCode session syncing
+- SQLite-based session database
+- Efficient context storage
+
+Schema:
+- sessions.db: SQLite database for session metadata
+- contexts/: Context files (one per session)
+- mappings/: Session mappings (directory, opencode_id)
 """
-
 import json
-import os
+import sqlite3
 import time
 import uuid
+from contextlib import contextmanager
 from dataclasses import dataclass, field
-from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 from rich.console import Console
 
 console = Console()
 
 RLM_DATA_DIR = Path.home() / ".local" / "share" / "rlm-opencode"
-SESSIONS_DIR = RLM_DATA_DIR / "sessions"
+SESSIONS_DB = RLM_DATA_DIR / "sessions.db"
+CONTEXTS_DIR = RLM_DATA_DIR / "contexts"
 MAPPINGS_DIR = RLM_DATA_DIR / "mappings"
 
 
 @dataclass
 class ContextEntry:
     """A single entry in the session context."""
-    type: str  # file_read, command, user_message, thinking
+    type: str
     offset: int
     length: int
     timestamp: float
@@ -38,18 +44,19 @@ class ContextEntry:
 class SessionStats:
     """Statistics about a session."""
     files_read: int = 0
-    commands_run: int = 0
-    user_messages: int = 0
+    tool_outputs: int = 0
     thinking_blocks: int = 0
     total_chars: int = 0
 
 
 @dataclass
 class Session:
-    """Represents an RLM session."""
+    """Represents an RLM-OpenCode session."""
     id: str
     created: float
     opencode_session_id: str | None = None
+    directory: str | None = None
+    incognito: bool = False
     entries: list[ContextEntry] = field(default_factory=list)
     stats: SessionStats = field(default_factory=SessionStats)
     context_file: str = ""
@@ -59,11 +66,12 @@ class Session:
             "id": self.id,
             "created": self.created,
             "opencode_session_id": self.opencode_session_id,
+            "directory": self.directory,
+            "incognito": self.incognito,
             "context_file": self.context_file,
             "stats": {
                 "files_read": self.stats.files_read,
-                "commands_run": self.stats.commands_run,
-                "user_messages": self.stats.user_messages,
+                "tool_outputs": self.stats.tool_outputs,
                 "thinking_blocks": self.stats.thinking_blocks,
                 "total_chars": self.stats.total_chars,
             },
@@ -82,11 +90,10 @@ class Session:
     @classmethod
     def from_dict(cls, data: dict) -> "Session":
         stats = SessionStats(
-            files_read=data["stats"].get("files_read", 0),
-            commands_run=data["stats"].get("commands_run", 0),
-            user_messages=data["stats"].get("user_messages", 0),
-            thinking_blocks=data["stats"].get("thinking_blocks", 0),
-            total_chars=data["stats"].get("total_chars", 0),
+            files_read=data.get("stats", {}).get("files_read", 0),
+            tool_outputs=data.get("stats", {}).get("tool_outputs", 0),
+            thinking_blocks=data.get("stats", {}).get("thinking_blocks", 0),
+            total_chars=data.get("stats", {}).get("total_chars", 0),
         )
         entries = [
             ContextEntry(
@@ -102,6 +109,8 @@ class Session:
             id=data["id"],
             created=data["created"],
             opencode_session_id=data.get("opencode_session_id"),
+            directory=data.get("directory"),
+            incognito=data.get("incognito", False),
             context_file=data.get("context_file", ""),
             entries=entries,
             stats=stats,
@@ -109,27 +118,82 @@ class Session:
 
 
 class SessionManager:
-    """Manages RLM sessions.
+    """Manages RLM-OpenCode sessions with SQLite backend.
     
     Features:
-    - Create/destroy sessions
-    - Append context entries
-    - Persist and restore sessions
-    - Map opencode sessions to RLM sessions
+    - Incognito mode: Sessions that don't persist to disk
+    - OpenCode syncing: Automatic sync with opencode session IDs
+    - Directory mapping: Stable sessions per project directory
+    - SQLite database: Fast queries and reliable storage
     """
     
     def __init__(self):
         self.sessions: dict[str, Session] = {}
+        self._incognito_sessions: set[str] = set()
         self._ensure_dirs()
+        self._init_db()
     
     def _ensure_dirs(self):
         """Ensure data directories exist."""
         RLM_DATA_DIR.mkdir(parents=True, exist_ok=True)
-        SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
+        CONTEXTS_DIR.mkdir(parents=True, exist_ok=True)
         MAPPINGS_DIR.mkdir(parents=True, exist_ok=True)
     
-    def create_session(self, opencode_session_id: str | None = None) -> Session:
-        """Create a new session."""
+    def _init_db(self):
+        """Initialize SQLite database."""
+        with self._get_db() as conn:
+            conn.executescript("""
+                CREATE TABLE IF NOT EXISTS sessions (
+                    id TEXT PRIMARY KEY,
+                    created REAL NOT NULL,
+                    opencode_session_id TEXT,
+                    directory TEXT,
+                    incognito INTEGER DEFAULT 0,
+                    context_file TEXT,
+                    stats_json TEXT,
+                    UNIQUE(opencode_session_id)
+                );
+                
+                CREATE TABLE IF NOT EXISTS entries (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_id TEXT NOT NULL,
+                    type TEXT NOT NULL,
+                    offset INTEGER NOT NULL,
+                    length INTEGER NOT NULL,
+                    timestamp REAL NOT NULL,
+                    metadata_json TEXT,
+                    FOREIGN KEY (session_id) REFERENCES sessions(id)
+                );
+                
+                CREATE INDEX IF NOT EXISTS idx_sessions_opencode ON sessions(opencode_session_id);
+                CREATE INDEX IF NOT EXISTS idx_sessions_directory ON sessions(directory);
+                CREATE INDEX IF NOT EXISTS idx_entries_session ON entries(session_id);
+            """)
+    
+    @contextmanager
+    def _get_db(self) -> Iterator[sqlite3.Connection]:
+        """Get database connection."""
+        conn = sqlite3.connect(str(SESSIONS_DB))
+        conn.row_factory = sqlite3.Row
+        try:
+            yield conn
+            conn.commit()
+        finally:
+            conn.close()
+    
+    def create_session(
+        self,
+        opencode_session_id: str | None = None,
+        directory: str | None = None,
+        incognito: bool = False,
+    ) -> Session:
+        """Create a new session.
+        
+        Args:
+            opencode_session_id: Optional opencode session to sync with
+            directory: Optional working directory for stable mapping
+            incognito: If True, session won't persist to disk
+        """
         session_id = f"sess_{uuid.uuid4().hex[:12]}"
         context_file = f"{session_id}_context.txt"
         
@@ -137,20 +201,24 @@ class SessionManager:
             id=session_id,
             created=time.time(),
             opencode_session_id=opencode_session_id,
+            directory=directory,
+            incognito=incognito,
             context_file=context_file,
         )
         
-        # Create empty context file
-        context_path = SESSIONS_DIR / context_file
-        context_path.touch()
+        if not incognito:
+            context_path = CONTEXTS_DIR / context_file
+            context_path.touch()
         
         self.sessions[session_id] = session
         
-        # Save mapping if opencode session provided
-        if opencode_session_id:
-            self._save_mapping(opencode_session_id, session_id)
+        if incognito:
+            self._incognito_sessions.add(session_id)
+            console.print(f"[dim]Created incognito session {session_id}[/dim]")
+        else:
+            self._save_session(session)
+            console.print(f"[green]Created session {session_id}[/green]")
         
-        console.print(f"[green]Created session {session_id}[/green]")
         return session
     
     def get_session(self, session_id: str) -> Session | None:
@@ -158,69 +226,76 @@ class SessionManager:
         if session_id in self.sessions:
             return self.sessions[session_id]
         
-        # Try to load from disk
         session = self._load_session(session_id)
         if session:
             self.sessions[session_id] = session
         return session
     
     def get_session_by_opencode(self, opencode_session_id: str) -> Session | None:
-        """Get session by opencode session ID."""
-        mapping = self._load_mapping(opencode_session_id)
-        if mapping:
-            return self.get_session(mapping["rlm_opencode_id"])
-        return None
-    
-    def get_or_create_session_by_directory(self, directory: str) -> Session:
-        """Get or create session by working directory.
+        """Get or create session synced with an opencode session."""
+        with self._get_db() as conn:
+            row = conn.execute(
+                "SELECT * FROM sessions WHERE opencode_session_id = ?",
+                (opencode_session_id,)
+            ).fetchone()
+            
+            if row:
+                return self._row_to_session(row)
         
-        This provides stable session mapping across multiple opencode run calls
-        from the same project directory.
-        """
-        # Normalize directory path
+        return self.create_session(opencode_session_id=opencode_session_id)
+    
+    def get_or_create_session_by_directory(self, directory: str, incognito: bool = False) -> Session:
+        """Get or create session by working directory."""
         dir_path = str(Path(directory).resolve())
         
-        # Check for existing mapping
-        mapping = self._load_directory_mapping(dir_path)
-        if mapping:
-            session = self.get_session(mapping["rlm_opencode_id"])
-            if session:
+        for session in self.sessions.values():
+            if session.directory == dir_path:
                 return session
         
-        # Create new session with directory mapping
-        session = self.create_session()
-        self._save_directory_mapping(dir_path, session.id)
+        with self._get_db() as conn:
+            row = conn.execute(
+                "SELECT * FROM sessions WHERE directory = ?",
+                (dir_path,)
+            ).fetchone()
+            
+            if row:
+                session = self._row_to_session(row)
+                self.sessions[session.id] = session
+                return session
+        
+        session = self.create_session(directory=dir_path, incognito=incognito)
         console.print(f"[green]Created session {session.id} for directory: {dir_path}[/green]")
         return session
     
-    def _save_directory_mapping(self, directory: str, rlm_opencode_id: str):
-        """Save directory → RLM session mapping."""
-        mapping_file = MAPPINGS_DIR / "directory_to_rlm.json"
+    def set_incognito(self, session_id: str, incognito: bool):
+        """Toggle incognito mode for a session."""
+        session = self.get_session(session_id)
+        if not session:
+            return
         
-        mappings = {}
-        if mapping_file.exists():
-            with open(mapping_file) as f:
-                mappings = json.load(f)
+        if incognito and not session.incognito:
+            session.incognito = True
+            self._incognito_sessions.add(session_id)
+            
+            with self._get_db() as conn:
+                conn.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
+                conn.execute("DELETE FROM entries WHERE session_id = ?", (session_id,))
+            
+            context_path = CONTEXTS_DIR / session.context_file
+            if context_path.exists():
+                context_path.unlink()
+            
+            console.print(f"[dim]Session {session_id} now in incognito mode[/dim]")
         
-        mappings[directory] = {
-            "rlm_opencode_id": rlm_opencode_id,
-            "created": time.time(),
-        }
-        
-        with open(mapping_file, "w") as f:
-            json.dump(mappings, f, indent=2)
-    
-    def _load_directory_mapping(self, directory: str) -> dict | None:
-        """Load directory → RLM session mapping."""
-        mapping_file = MAPPINGS_DIR / "directory_to_rlm.json"
-        
-        if not mapping_file.exists():
-            return None
-        
-        with open(mapping_file) as f:
-            mappings = json.load(f)
-        
-        return mappings.get(directory)
+        elif not incognito and session.incognito:
+            session.incognito = False
+            self._incognito_sessions.discard(session_id)
+            
+            context_path = CONTEXTS_DIR / session.context_file
+            context_path.touch()
+            
+            self._save_session(session)
+            console.print(f"[green]Session {session_id} now persisted[/green]")
     
     def append(
         self,
@@ -229,32 +304,24 @@ class SessionManager:
         content: str,
         metadata: dict[str, Any] | None = None,
     ) -> ContextEntry:
-        """Append content to a session.
-        
-        Args:
-            session_id: Session ID
-            entry_type: Type of entry (file_read, command, user_message, thinking)
-            content: The content to append
-            metadata: Optional metadata (path, command, etc.)
-        
-        Returns:
-            The created ContextEntry
-        """
+        """Append content to a session."""
         session = self.get_session(session_id)
         if not session:
             raise ValueError(f"Session {session_id} not found")
         
-        context_path = SESSIONS_DIR / session.context_file
+        if session.incognito:
+            current_size = sum(e.length for e in session.entries)
+        else:
+            context_path = CONTEXTS_DIR / session.context_file
+            current_size = context_path.stat().st_size if context_path.exists() else 0
         
-        # Get current offset
-        current_size = context_path.stat().st_size
-        
-        # Append content
-        with open(context_path, "a") as f:
-            f.write(content)
-            if not content.endswith("\n"):
-                f.write("\n")
-            f.write("---ENTRY_SEPARATOR---\n")
+        if not session.incognito:
+            context_path = CONTEXTS_DIR / session.context_file
+            with open(context_path, "a") as f:
+                f.write(content)
+                if not content.endswith("\n"):
+                    f.write("\n")
+                f.write("---ENTRY_SEPARATOR---\n")
         
         entry = ContextEntry(
             type=entry_type,
@@ -266,19 +333,16 @@ class SessionManager:
         
         session.entries.append(entry)
         
-        # Update stats
         session.stats.total_chars += len(content)
         if entry_type == "file_read":
             session.stats.files_read += 1
-        elif entry_type == "command":
-            session.stats.commands_run += 1
-        elif entry_type == "user_message":
-            session.stats.user_messages += 1
+        elif entry_type == "tool_result":
+            session.stats.tool_outputs += 1
         elif entry_type == "thinking":
             session.stats.thinking_blocks += 1
         
-        # Save session metadata
-        self._save_session(session)
+        if not session.incognito:
+            self._save_session(session)
         
         return entry
     
@@ -288,27 +352,29 @@ class SessionManager:
         if not session:
             raise ValueError(f"Session {session_id} not found")
         
-        context_path = SESSIONS_DIR / session.context_file
-        with open(context_path) as f:
-            return f.read()
+        if session.incognito:
+            return ""
+        
+        context_path = CONTEXTS_DIR / session.context_file
+        if context_path.exists():
+            with open(context_path) as f:
+                return f.read()
+        return ""
     
     def get_context_summary(self, session_id: str) -> str:
-        """Get a summary of the session context for the LLM prompt."""
+        """Get a summary of the session context."""
         session = self.get_session(session_id)
         if not session:
-            raise ValueError(f"Session {session_id} not found")
+            return ""
         
         stats = session.stats
-        total_mb = stats.total_chars / 1_000_000
-        
         if stats.total_chars == 0:
             return ""
         
-        summary = f"""## RLM Accumulated Context ({stats.total_chars:,} chars, {total_mb:.1f} MB)
-Files read: {stats.files_read} | Tool outputs: {stats.commands_run} | Thinking blocks: {stats.thinking_blocks}
-
-"""
-        return summary
+        total_mb = stats.total_chars / 1_000_000
+        mode = " (incognito)" if session.incognito else ""
+        
+        return f"## RLM Context ({stats.total_chars:,} chars, {total_mb:.2f} MB){mode}\nTools: {stats.tool_outputs} | Files: {stats.files_read} | Thinking: {stats.thinking_blocks}\n"
     
     def delete_session(self, session_id: str) -> bool:
         """Delete a session."""
@@ -316,69 +382,130 @@ Files read: {stats.files_read} | Tool outputs: {stats.commands_run} | Thinking b
         if not session:
             return False
         
-        # Delete context file
-        context_path = SESSIONS_DIR / session.context_file
-        if context_path.exists():
-            context_path.unlink()
+        if not session.incognito:
+            context_path = CONTEXTS_DIR / session.context_file
+            if context_path.exists():
+                context_path.unlink()
         
-        # Delete session metadata
-        meta_path = SESSIONS_DIR / f"{session_id}.json"
-        if meta_path.exists():
-            meta_path.unlink()
+        with self._get_db() as conn:
+            conn.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
+            conn.execute("DELETE FROM entries WHERE session_id = ?", (session_id,))
         
-        # Remove from memory
-        if session_id in self.sessions:
-            del self.sessions[session_id]
+        self.sessions.pop(session_id, None)
+        self._incognito_sessions.discard(session_id)
         
         console.print(f"[yellow]Deleted session {session_id}[/yellow]")
         return True
     
+    def list_sessions(self, include_incognito: bool = False) -> list[Session]:
+        """List all sessions."""
+        sessions = []
+        
+        with self._get_db() as conn:
+            for row in conn.execute("SELECT * FROM sessions ORDER BY created DESC"):
+                sessions.append(self._row_to_session(row))
+        
+        if include_incognito:
+            for session_id in self._incognito_sessions:
+                if session_id in self.sessions:
+                    sessions.append(self.sessions[session_id])
+        
+        return sessions
+    
+    def sync_with_opencode(self, session_id: str, opencode_session_id: str):
+        """Sync an existing session with an opencode session."""
+        session = self.get_session(session_id)
+        if not session:
+            return
+        
+        session.opencode_session_id = opencode_session_id
+        
+        if not session.incognito:
+            with self._get_db() as conn:
+                conn.execute(
+                    "UPDATE sessions SET opencode_session_id = ? WHERE id = ?",
+                    (opencode_session_id, session_id)
+                )
+    
     def _save_session(self, session: Session):
-        """Save session metadata to disk."""
-        meta_path = SESSIONS_DIR / f"{session.id}.json"
-        with open(meta_path, "w") as f:
-            json.dump(session.to_dict(), f, indent=2)
+        """Save session to database."""
+        if session.incognito:
+            return
+        
+        with self._get_db() as conn:
+            conn.execute("""
+                INSERT OR REPLACE INTO sessions 
+                (id, created, opencode_session_id, directory, incognito, context_file, stats_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (
+                session.id,
+                session.created,
+                session.opencode_session_id,
+                session.directory,
+                1 if session.incognito else 0,
+                session.context_file,
+                json.dumps(session.stats.__dict__),
+            ))
+            
+            conn.execute("DELETE FROM entries WHERE session_id = ?", (session.id,))
+            
+            for entry in session.entries:
+                conn.execute("""
+                    INSERT INTO entries (session_id, type, offset, length, timestamp, metadata_json)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                """, (
+                    session.id,
+                    entry.type,
+                    entry.offset,
+                    entry.length,
+                    entry.timestamp,
+                    json.dumps(entry.metadata),
+                ))
     
     def _load_session(self, session_id: str) -> Session | None:
-        """Load session metadata from disk."""
-        meta_path = SESSIONS_DIR / f"{session_id}.json"
-        if not meta_path.exists():
-            return None
-        
-        with open(meta_path) as f:
-            data = json.load(f)
-        
-        return Session.from_dict(data)
+        """Load session from database."""
+        with self._get_db() as conn:
+            row = conn.execute(
+                "SELECT * FROM sessions WHERE id = ?",
+                (session_id,)
+            ).fetchone()
+            
+            if not row:
+                return None
+            
+            session = self._row_to_session(row)
+            
+            for entry_row in conn.execute(
+                "SELECT * FROM entries WHERE session_id = ? ORDER BY timestamp",
+                (session_id,)
+            ):
+                session.entries.append(ContextEntry(
+                    type=entry_row["type"],
+                    offset=entry_row["offset"],
+                    length=entry_row["length"],
+                    timestamp=entry_row["timestamp"],
+                    metadata=json.loads(entry_row["metadata_json"] or "{}"),
+                ))
+            
+            return session
     
-    def _save_mapping(self, opencode_session_id: str, rlm_opencode_id: str):
-        """Save opencode → RLM session mapping."""
-        mapping_file = MAPPINGS_DIR / "opencode_to_rlm.json"
-        
-        mappings = {}
-        if mapping_file.exists():
-            with open(mapping_file) as f:
-                mappings = json.load(f)
-        
-        mappings[opencode_session_id] = {
-            "rlm_opencode_id": rlm_opencode_id,
-            "created": time.time(),
-        }
-        
-        with open(mapping_file, "w") as f:
-            json.dump(mappings, f, indent=2)
-    
-    def _load_mapping(self, opencode_session_id: str) -> dict | None:
-        """Load opencode → RLM session mapping."""
-        mapping_file = MAPPINGS_DIR / "opencode_to_rlm.json"
-        
-        if not mapping_file.exists():
-            return None
-        
-        with open(mapping_file) as f:
-            mappings = json.load(f)
-        
-        return mappings.get(opencode_session_id)
+    def _row_to_session(self, row: sqlite3.Row) -> Session:
+        """Convert database row to Session object."""
+        stats_data = json.loads(row["stats_json"] or "{}")
+        return Session(
+            id=row["id"],
+            created=row["created"],
+            opencode_session_id=row["opencode_session_id"],
+            directory=row["directory"],
+            incognito=bool(row["incognito"]),
+            context_file=row["context_file"],
+            stats=SessionStats(
+                files_read=stats_data.get("files_read", 0),
+                tool_outputs=stats_data.get("tool_outputs", 0),
+                thinking_blocks=stats_data.get("thinking_blocks", 0),
+                total_chars=stats_data.get("total_chars", 0),
+            ),
+        )
 
 
-# Global session manager
 session_manager = SessionManager()
