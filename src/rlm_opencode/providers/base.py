@@ -145,7 +145,7 @@ class BaseProvider(ABC):
         if auth.startswith("Bearer "):
             return auth[7:]
         
-        # 2. Search opencode.json providers for API key
+        # 2. Search opencode.json for API key
         if opencode_config_path.exists():
             try:
                 with open(opencode_config_path) as f:
@@ -153,7 +153,13 @@ class BaseProvider(ABC):
                 
                 providers = oc_config.get("provider", {})
                 
-                # Direct match by provider_id
+                # Resolve our baseURL: either from our config or from the
+                # upstream provider config in opencode.json (we're a middleman)
+                effective_base_url = self.base_url
+                if not effective_base_url and self.provider_id in providers:
+                    effective_base_url = providers[self.provider_id].get("options", {}).get("baseURL")
+                
+                # Try to get apiKey directly from the upstream provider config
                 if self.provider_id in providers:
                     prov_opts = providers[self.provider_id].get("options", {})
                     if "apiKey" in prov_opts:
@@ -163,10 +169,10 @@ class BaseProvider(ABC):
                         return prov_auth[7:]
                 
                 # If we have a baseURL, find any provider with the same baseURL
-                if self.base_url:
+                if effective_base_url:
                     for prov_id, prov_config in providers.items():
                         prov_url = prov_config.get("options", {}).get("baseURL", "")
-                        if prov_url and prov_url == self.base_url:
+                        if prov_url and prov_url == effective_base_url:
                             prov_opts = prov_config.get("options", {})
                             if "apiKey" in prov_opts:
                                 return prov_opts["apiKey"]
@@ -174,15 +180,34 @@ class BaseProvider(ABC):
                             if prov_auth.startswith("Bearer "):
                                 return prov_auth[7:]
                 
-                # Search all MCP server environment variables
+                # Extract domain from baseURL for MCP env var matching
+                # e.g., "https://api.z.ai/api/..." → "z.ai" → "Z_AI"
+                domain_prefix = None
+                if effective_base_url:
+                    try:
+                        from urllib.parse import urlparse
+                        host = urlparse(effective_base_url).hostname or ""
+                        # Strip common prefixes like "api." and "open."
+                        for prefix in ["api.", "open."]:
+                            if host.startswith(prefix):
+                                host = host[len(prefix):]
+                        # Convert domain to env-style: "z.ai" → "Z_AI"
+                        domain_prefix = host.upper().replace(".", "_")
+                    except Exception:
+                        pass
+                
+                # Search MCP server environment variables, matching by domain
                 mcp = oc_config.get("mcp", {})
                 for server_name, server_config in mcp.items():
                     env = server_config.get("environment", {})
                     for env_key, env_val in env.items():
                         if env_key.endswith("_API_KEY") and env_val:
-                            # Check if this MCP key matches our provider
+                            # Match by domain prefix (e.g., Z_AI matches Z_AI_API_KEY)
+                            if domain_prefix and env_key.startswith(domain_prefix):
+                                return env_val
+                            # Also try direct provider name match
                             provider_upper = self.provider_id.upper().replace("-", "_")
-                            if provider_upper in env_key or env_key == "API_KEY":
+                            if env_key.startswith(provider_upper):
                                 return env_val
                 
             except Exception:
