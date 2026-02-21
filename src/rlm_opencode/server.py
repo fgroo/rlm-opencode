@@ -194,17 +194,31 @@ def get_or_create_session() -> str:
     console.print(f"[green]Created standalone session: {session.id}[/green]")
     return session.id
 
+# Track how many messages we've already captured per session
+# to avoid duplicating content since OpenCode resends full history each request
+_session_msg_count: dict[str, int] = {}
+
 
 def capture_content(messages: list[ChatMessage], session_id: str):
-    """Capture conversation content into session context.
+    """Capture NEW conversation content into session context.
     
-    Captures:
-    - ALL tool results (file reads, command outputs, search results)
-    - Assistant text responses (summaries, analysis, etc.)
-    
-    This builds the model's long-term memory across the chat.
+    OpenCode sends the FULL message history with every request.
+    We track how many messages we've already processed and only
+    capture new ones to avoid duplication.
     """
-    # Build a tool_call_id → tool_name lookup from assistant messages
+    global _session_msg_count
+    
+    prev_count = _session_msg_count.get(session_id, 0)
+    current_count = len(messages)
+    
+    if current_count <= prev_count:
+        return  # No new messages
+    
+    # Only process new messages (from prev_count onwards)
+    new_messages = messages[prev_count:]
+    _session_msg_count[session_id] = current_count
+    
+    # Build tool_call_id → tool_name lookup from ALL messages (need full history for resolution)
     tool_id_to_name: dict[str, str] = {}
     for msg in messages:
         if msg.role == "assistant" and msg.tool_calls:
@@ -214,7 +228,8 @@ def capture_content(messages: list[ChatMessage], session_id: str):
                 if tc_id and tc_name:
                     tool_id_to_name[tc_id] = tc_name
     
-    for msg in messages:
+    captured = 0
+    for msg in new_messages:
         if msg.role == "tool" and msg.content:
             tool_name = msg.name or tool_id_to_name.get(msg.tool_call_id or "", "") or "external_tool"
             content = msg.content if isinstance(msg.content, str) else str(msg.content)
@@ -225,20 +240,20 @@ def capture_content(messages: list[ChatMessage], session_id: str):
                     f"[Tool: {tool_name}]\n{content[:RLM_CAPTURE_MAX_CHARS]}",
                     metadata={"tool": tool_name, "truncated": len(content) > RLM_CAPTURE_MAX_CHARS}
                 )
+                captured += 1
         
         elif msg.role == "assistant" and msg.content:
             content = msg.content if isinstance(msg.content, str) else str(msg.content)
             if not msg.tool_calls and len(content) > 50:
-                # Capture assistant text responses (final answers)
                 session_manager.append(
                     session_id,
                     "assistant_response",
                     f"[Assistant]\n{content[:RLM_CAPTURE_MAX_CHARS]}",
                     metadata={"truncated": len(content) > RLM_CAPTURE_MAX_CHARS}
                 )
+                captured += 1
         
         elif msg.role == "user" and msg.content:
-            # Capture user messages (prompts, instructions)
             content = msg.content if isinstance(msg.content, str) else str(msg.content)
             if len(content) >= RLM_CAPTURE_MIN_CHARS:
                 session_manager.append(
@@ -247,6 +262,10 @@ def capture_content(messages: list[ChatMessage], session_id: str):
                     f"[User]\n{content[:RLM_CAPTURE_MAX_CHARS]}",
                     metadata={"truncated": len(content) > RLM_CAPTURE_MAX_CHARS}
                 )
+                captured += 1
+    
+    if captured > 0:
+        console.print(f"[dim]  Captured {captured} new entries from {len(new_messages)} new messages[/dim]")
 
 
 def build_rlm_system_prompt(session_id: str) -> str:
