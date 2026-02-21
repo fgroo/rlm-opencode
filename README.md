@@ -83,7 +83,7 @@ The model has access to these tools:
 OpenCode (Client)                    RLM-OpenCode Server
 ┌─────────────────┐                  ┌──────────────────────┐
 │                 │   API Request    │                      │
-│  opencode run   │ ───────────────▶ │  FastAPI Server      │
+│  opencode run   │ ───────────────▶│  FastAPI Server      │
 │  -m rlm-opencode│                  │  (port 8769)         │
 │                 │                  │                      │
 └─────────────────┘                  └──────────┬───────────┘
@@ -92,9 +92,9 @@ OpenCode (Client)                    RLM-OpenCode Server
         ▼
 ┌─────────────────┐                  ┌──────────────────────┐
 │                 │   Tool Calls     │                      │
-│  Model (GLM-5)  │ ◀─────────────── │  Context Store       │
+│  Model (LLM)    │ ◀───────────────│ Context Store        │
 │                 │   Context Data   │  (Session Files)     │
-│                 │ ───────────────▶ │  100M+ chars         │
+│                 │ ───────────────▶│  100M+ chars         │
 └─────────────────┘                  └──────────────────────┘
 ```
 

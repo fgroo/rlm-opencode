@@ -5,8 +5,8 @@ This script adds RLM-Session-wrapped versions of all your opencode models.
 RLM-Session provides 40M+ character context for agentic workflows.
 
 Usage:
-    rlm-opencode-setup install           # Proxy mode (port 8767)
-    rlm-opencode-setup install --native  # Native mode (port 8768)
+    rlm-opencode-setup install           # Default mode (port 8769)
+    rlm-opencode-setup install --native  # Native mode (port 8769)
     rlm-opencode-setup uninstall         # Remove proxy models
     rlm-opencode-setup uninstall --native # Remove native models
     rlm-opencode-setup status            # Check current status
@@ -33,9 +33,9 @@ OPENCODE_CONFIG = Path.home() / ".config" / "opencode" / "opencode.json"
 RLM_CONTEXT_LIMIT = 40000000
 
 # Mode-specific settings
-PROXY_URL = "http://localhost:8767/v1"
+PROXY_URL = "http://localhost:8769/v1"
 PROXY_PROVIDER_ID = "rlm-opencode"
-NATIVE_URL = "http://localhost:8768/v1"
+NATIVE_URL = "http://localhost:8769/v1"
 NATIVE_PROVIDER_ID = "rlm-native"
 
 
@@ -78,7 +78,7 @@ def save_config(config):
 
 def is_server_running(native: bool = False):
     """Check if RLM-Session server is running."""
-    port = 8768 if native else 8767
+    port = 8769
     try:
         response = httpx.get(f"http://localhost:{port}/health", timeout=2)
         return response.status_code == 200
@@ -101,14 +101,14 @@ def get_mode_settings(native: bool = False) -> dict:
         return {
             "provider_id": NATIVE_PROVIDER_ID,
             "url": NATIVE_URL,
-            "port": 8768,
+            "port": 8769,
             "name": "RLM-Native (direct API, context management)",
             "description": "Native mode calls model APIs directly with context injection.",
         }
     return {
         "provider_id": PROXY_PROVIDER_ID,
         "url": PROXY_URL,
-        "port": 8767,
+        "port": 8769,
         "name": "RLM-Session (proxy, context management)",
         "description": "Proxy mode wraps opencode run for context accumulation.",
     }
