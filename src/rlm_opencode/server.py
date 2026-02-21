@@ -83,17 +83,25 @@ class ChatCompletionResponse(BaseModel):
 
 # Session detection
 def get_or_create_session() -> str:
-    """Get or create session based on working directory."""
+    """Get or create session bound to the current opencode chat.
+    
+    Each opencode chat gets its own isolated RLM session.
+    Two agents in the same directory will NOT share context.
+    """
     from rlm_opencode.detector import get_current_session
     
     detected = get_current_session()
-    if detected and detected.get("directory"):
-        session = session_manager.get_or_create_session_by_directory(detected["directory"])
-        console.print(f"[cyan]Session: {session.id} ({detected['directory']})[/cyan]")
+    if detected and detected.get("id"):
+        # Bind by opencode's unique chat session ID (per-chat isolation)
+        session = session_manager.get_or_create_session_by_opencode_id(
+            detected["id"],
+            directory=detected.get("directory"),
+        )
+        console.print(f"[cyan]Session: {session.id} (opencode chat: {detected['id'][:12]}...)[/cyan]")
         return session.id
     
     session = session_manager.create_session()
-    console.print(f"[green]Created session: {session.id}[/green]")
+    console.print(f"[green]Created standalone session: {session.id}[/green]")
     return session.id
 
 

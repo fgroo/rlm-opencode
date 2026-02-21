@@ -268,6 +268,34 @@ class SessionManager:
         session = self.create_session(directory=dir_path, incognito=incognito)
         console.print(f"[green]Created session {session.id} for directory: {dir_path}[/green]")
         return session
+
+    def get_or_create_session_by_opencode_id(self, opencode_id: str, directory: str | None = None) -> Session:
+        """Get or create session by opencode chat session ID.
+        
+        Each opencode chat gets its own isolated RLM session.
+        This ensures two agents in the same directory don't share context.
+        """
+        # Check in-memory cache first
+        for session in self.sessions.values():
+            if session.opencode_session_id == opencode_id:
+                return session
+        
+        # Check database
+        with self._get_db() as conn:
+            row = conn.execute(
+                "SELECT * FROM sessions WHERE opencode_session_id = ?",
+                (opencode_id,)
+            ).fetchone()
+            
+            if row:
+                session = self._row_to_session(row)
+                self.sessions[session.id] = session
+                return session
+        
+        # Create new session bound to this opencode chat
+        session = self.create_session(opencode_session_id=opencode_id, directory=directory)
+        console.print(f"[green]Created session {session.id} for opencode chat: {opencode_id[:12]}...[/green]")
+        return session
     
     def set_incognito(self, session_id: str, incognito: bool):
         """Toggle incognito mode for a session."""
