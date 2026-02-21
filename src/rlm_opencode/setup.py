@@ -23,7 +23,7 @@ from pathlib import Path
 import httpx
 
 OPENCODE_CONFIG = Path.home() / ".config" / "opencode" / "opencode.json"
-RLM_CONTEXT_LIMIT = 40000000
+RLM_CONTEXT_LIMIT = 67000000  # 67M tokens (~300M chars) — NIAH benchmark validated up to 300M chars
 
 # Server settings
 SERVER_URL = "http://localhost:8769/v1"

@@ -81,10 +81,94 @@ class ChatCompletionResponse(BaseModel):
     usage: dict = Field(default_factory=lambda: {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0})
 
 
-# Configurable capture thresholds (env vars)
+# Configurable thresholds (env vars)
 import os
-RLM_CAPTURE_MIN_CHARS = int(os.environ.get("RLM_CAPTURE_MIN_CHARS", "500"))    # Min chars to capture (0 = all, 500 = skip small outputs)
+RLM_CAPTURE_MIN_CHARS = int(os.environ.get("RLM_CAPTURE_MIN_CHARS", "500"))    # Min chars to capture (0 = all, 500 = skip small)
 RLM_CAPTURE_MAX_CHARS = int(os.environ.get("RLM_CAPTURE_MAX_CHARS", "50000"))  # Max chars per entry
+UPSTREAM_MAX_TOKENS = int(os.environ.get("RLM_UPSTREAM_MAX_TOKENS", "128000")) # Upstream model's real context window
+TOKEN_RESERVE = int(os.environ.get("RLM_TOKEN_RESERVE", "16000"))              # Reserve for response + tools
+
+
+def estimate_tokens(text: str) -> int:
+    """Rough token estimate: ~4 chars per token."""
+    return len(text) // 4
+
+
+def estimate_message_tokens(msg: dict) -> int:
+    """Estimate tokens for a single message."""
+    total = 4  # message framing overhead
+    content = msg.get("content", "")
+    if content:
+        total += estimate_tokens(content if isinstance(content, str) else json.dumps(content))
+    if msg.get("tool_calls"):
+        total += estimate_tokens(json.dumps(msg["tool_calls"]))
+    if msg.get("name"):
+        total += estimate_tokens(msg["name"])
+    return total
+
+
+def truncate_messages(
+    messages: list[dict],
+    max_tokens: int = UPSTREAM_MAX_TOKENS,
+    reserve: int = TOKEN_RESERVE,
+) -> list[dict]:
+    """Truncate messages to fit the upstream model's context window.
+    
+    Per the RLM paper (Algorithm 1): only metadata + recent turns are sent
+    to the LLM. The full context is accessible via tools (rlm_search, etc.).
+    
+    Strategy:
+    1. Always keep: system messages (RLM instructions)
+    2. Always keep: last user message (current task)
+    3. Fill remaining budget backwards from most recent messages
+    4. If messages were dropped, insert a truncation notice
+    """
+    budget = max_tokens - reserve
+    
+    # Separate system messages and conversation messages
+    system_msgs = [m for m in messages if m.get("role") == "system"]
+    conv_msgs = [m for m in messages if m.get("role") != "system"]
+    
+    if not conv_msgs:
+        return messages
+    
+    # Calculate system prompt cost
+    system_cost = sum(estimate_message_tokens(m) for m in system_msgs)
+    remaining_budget = budget - system_cost
+    
+    if remaining_budget <= 0:
+        return system_msgs + conv_msgs[-2:]  # At least keep last exchange
+    
+    # Fill backwards from most recent messages
+    kept_msgs = []
+    total_tokens = 0
+    
+    for msg in reversed(conv_msgs):
+        msg_tokens = estimate_message_tokens(msg)
+        if total_tokens + msg_tokens > remaining_budget:
+            break
+        kept_msgs.insert(0, msg)
+        total_tokens += msg_tokens
+    
+    dropped_count = len(conv_msgs) - len(kept_msgs)
+    
+    if dropped_count > 0:
+        # Insert truncation notice
+        truncation_notice = {
+            "role": "user",
+            "content": (
+                f"[RLM Context Notice] {dropped_count} earlier messages were truncated "
+                f"to fit the model window. The full conversation history is stored in your "
+                f"RLM context. Use rlm_search() to find earlier content, or "
+                f"rlm_get_context(offset, length) to read specific sections."
+            ),
+        }
+        result = system_msgs + [truncation_notice] + kept_msgs
+        console.print(f"[yellow]  Truncated: dropped {dropped_count} messages, kept {len(kept_msgs)} (~{total_tokens:,} tokens)[/yellow]")
+    else:
+        result = system_msgs + kept_msgs
+    
+    return result
 
 
 # Session detection
@@ -142,14 +226,25 @@ def capture_content(messages: list[ChatMessage], session_id: str):
                     metadata={"tool": tool_name, "truncated": len(content) > RLM_CAPTURE_MAX_CHARS}
                 )
         
-        elif msg.role == "assistant" and msg.content and not msg.tool_calls:
-            # Capture assistant text responses (final answers, not tool-calling turns)
+        elif msg.role == "assistant" and msg.content:
             content = msg.content if isinstance(msg.content, str) else str(msg.content)
-            if len(content) > 50:  # Skip trivial responses
+            if not msg.tool_calls and len(content) > 50:
+                # Capture assistant text responses (final answers)
                 session_manager.append(
                     session_id,
                     "assistant_response",
                     f"[Assistant]\n{content[:RLM_CAPTURE_MAX_CHARS]}",
+                    metadata={"truncated": len(content) > RLM_CAPTURE_MAX_CHARS}
+                )
+        
+        elif msg.role == "user" and msg.content:
+            # Capture user messages (prompts, instructions)
+            content = msg.content if isinstance(msg.content, str) else str(msg.content)
+            if len(content) >= RLM_CAPTURE_MIN_CHARS:
+                session_manager.append(
+                    session_id,
+                    "user_message",
+                    f"[User]\n{content[:RLM_CAPTURE_MAX_CHARS]}",
                     metadata={"truncated": len(content) > RLM_CAPTURE_MAX_CHARS}
                 )
 
@@ -209,6 +304,10 @@ def inject_tools(request: ChatCompletionRequest, session_id: str) -> tuple[list[
         if msg.name:
             msg_dict["name"] = msg.name
         messages.append(msg_dict)
+    
+    # TRUNCATE: Per RLM paper Algorithm 1, only recent turns + metadata
+    # go to the LLM. Full context is accessible via tools.
+    messages = truncate_messages(messages)
     
     rlm_tools = get_context_tools_definition()
     
@@ -340,6 +439,7 @@ async def _stream_with_tools(
     
     collected_content = []
     collected_tool_calls = []
+    collected_reasoning = []
     finish_reason = None
     
     try:
@@ -354,6 +454,8 @@ async def _stream_with_tools(
                 collected_content.append(chunk.content)
             if chunk.tool_calls:
                 collected_tool_calls.extend(chunk.tool_calls)
+            if chunk.reasoning:
+                collected_reasoning.append(chunk.reasoning)
             if chunk.finish_reason:
                 finish_reason = chunk.finish_reason
             
@@ -378,7 +480,27 @@ async def _stream_with_tools(
             }
             yield f"data: {json.dumps(data)}\n\n"
         
-        console.print(f"[green][_stream] Complete: {len(collected_content)} chars, {len(collected_tool_calls)} tool calls[/green]")
+        # Capture the model's response into RLM context
+        full_content = "".join(collected_content)
+        full_reasoning = "".join(collected_reasoning)
+        
+        if full_reasoning and len(full_reasoning) >= RLM_CAPTURE_MIN_CHARS:
+            session_manager.append(
+                session_id,
+                "thinking",
+                f"[Thinking]\n{full_reasoning[:RLM_CAPTURE_MAX_CHARS]}",
+                metadata={"truncated": len(full_reasoning) > RLM_CAPTURE_MAX_CHARS}
+            )
+        
+        if full_content and not collected_tool_calls and len(full_content) > 50:
+            session_manager.append(
+                session_id,
+                "assistant_response",
+                f"[Assistant]\n{full_content[:RLM_CAPTURE_MAX_CHARS]}",
+                metadata={"truncated": len(full_content) > RLM_CAPTURE_MAX_CHARS}
+            )
+        
+        console.print(f"[green][_stream] Complete: {len(full_content)} chars, {len(collected_tool_calls)} tool calls[/green]")
         yield "data: [DONE]\n\n"
         
     except Exception as e:
