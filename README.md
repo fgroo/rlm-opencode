@@ -6,7 +6,7 @@ A Recursive Language Model implementation that gives AI coding assistants unlimi
 
 ## What is this?
 
-RLM-OpenCode is based on the [Recursive Language Models paper (arXiv:2512.24601)](https://arxiv.org/abs/2512.24601). It enables AI coding assistants to handle **100M+ character contexts** by treating context as an external resource accessed via tools, rather than stuffing everything into the prompt.
+RLM-OpenCode is based on the [Recursive Language Models paper (arXiv:2512.24601)](https://arxiv.org/abs/2512.24601). It enables AI coding assistants to handle **242M+ character contexts** by treating context as an external resource accessed via tools, rather than stuffing everything into the prompt.
 
 ```
 Traditional:  Context (60M chars) → Model → 💀 FAILS
@@ -94,7 +94,7 @@ OpenCode (Client)                    RLM-OpenCode Server
 │                 │   Tool Calls     │                      │
 │  Model (LLM)    │ ◀───────────────│ Context Store        │
 │                 │   Context Data   │  (Session Files)     │
-│                 │ ───────────────▶│  100M+ chars         │
+│                 │ ───────────────▶│  242M+ chars         │
 └─────────────────┘                  └──────────────────────┘
 ```
 
