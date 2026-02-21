@@ -11,3 +11,4 @@ build/
 *.log
 .env
 .venv/
+test-benchmark/

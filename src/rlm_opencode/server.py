@@ -15,7 +15,7 @@ import time
 from typing import AsyncGenerator
 from uuid import uuid4
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
@@ -128,7 +128,7 @@ def build_rlm_system_prompt(session_id: str) -> str:
 You have access to accumulated context from this session:
 - **Total Context**: {len(context):,} characters ({context_mb:.2f} MB)
 - **Lines**: {context_lines:,}
-- **Tool Results Captured**: {stats.commands_run if stats else 0}
+- **Tool Results Captured**: {stats.tool_outputs if stats else 0}
 
 Instead of seeing the full context, you have TOOLS to access it on-demand:
 - `rlm_get_context(offset, length)` - Get a chunk of context
@@ -191,12 +191,17 @@ async def health():
 
 
 @app.post("/v1/chat/completions")
-async def chat_completions(request: ChatCompletionRequest):
+async def chat_completions(request: ChatCompletionRequest, x_rlm_session: str | None = Header(default=None)):
     """RLM chat completions with tool-based context access."""
     console.print(f"[bold cyan][API] Request: {request.model}[/bold cyan]")
     console.print(f"[dim]  Messages: {len(request.messages)}, Stream: {request.stream}[/dim]")
     
-    session_id = get_or_create_session()
+    if x_rlm_session and session_manager.get_session(x_rlm_session):
+        session_id = x_rlm_session
+        console.print(f"[cyan]Using provided session header: {session_id}[/cyan]")
+    else:
+        session_id = get_or_create_session()
+        
     session = session_manager.get_session(session_id)
     
     capture_content(request.messages, session_id)

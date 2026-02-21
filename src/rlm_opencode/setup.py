@@ -246,7 +246,7 @@ def install(native: bool = False):
     print(f"  opencode run -m {mode['provider_id']}/<provider>.<model>")
     print()
     print("Examples:")
-    print(f"  opencode run -m {mode['provider_id']}/z_ai_xhigh_coding_plan.glm-5")
+    print(f"  opencode run -m {mode['provider_id']}/z_ai_xhigh_coding_plan.rlm-core-v1")
     print(f"  opencode run -m {mode['provider_id']}/openai.gpt-4o")
     print()
     print(mode["description"])

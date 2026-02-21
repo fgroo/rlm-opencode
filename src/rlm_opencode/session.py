@@ -130,6 +130,7 @@ class SessionManager:
     def __init__(self):
         self.sessions: dict[str, Session] = {}
         self._incognito_sessions: set[str] = set()
+        self._incognito_contexts: dict[str, str] = {}
         self._ensure_dirs()
         self._init_db()
     
@@ -214,6 +215,7 @@ class SessionManager:
         
         if incognito:
             self._incognito_sessions.add(session_id)
+            self._incognito_contexts[session_id] = ""
             console.print(f"[dim]Created incognito session {session_id}[/dim]")
         else:
             self._save_session(session)
@@ -283,7 +285,11 @@ class SessionManager:
             
             context_path = CONTEXTS_DIR / session.context_file
             if context_path.exists():
+                with open(context_path) as f:
+                    self._incognito_contexts[session_id] = f.read()
                 context_path.unlink()
+            else:
+                self._incognito_contexts[session_id] = ""
             
             console.print(f"[dim]Session {session_id} now in incognito mode[/dim]")
         
@@ -291,8 +297,11 @@ class SessionManager:
             session.incognito = False
             self._incognito_sessions.discard(session_id)
             
+            context_data = self._incognito_contexts.pop(session_id, "")
+            
             context_path = CONTEXTS_DIR / session.context_file
-            context_path.touch()
+            with open(context_path, "w") as f:
+                f.write(context_data)
             
             self._save_session(session)
             console.print(f"[green]Session {session_id} now persisted[/green]")
@@ -315,7 +324,13 @@ class SessionManager:
             context_path = CONTEXTS_DIR / session.context_file
             current_size = context_path.stat().st_size if context_path.exists() else 0
         
-        if not session.incognito:
+        if session.incognito:
+            sep = "\n---ENTRY_SEPARATOR---\n"
+            content_with_sep = content + sep if not content.endswith("\n") else content + "---ENTRY_SEPARATOR---\n"
+            if session_id not in self._incognito_contexts:
+                self._incognito_contexts[session_id] = ""
+            self._incognito_contexts[session_id] += content_with_sep
+        else:
             context_path = CONTEXTS_DIR / session.context_file
             with open(context_path, "a") as f:
                 f.write(content)
@@ -353,7 +368,7 @@ class SessionManager:
             raise ValueError(f"Session {session_id} not found")
         
         if session.incognito:
-            return ""
+            return self._incognito_contexts.get(session_id, "")
         
         context_path = CONTEXTS_DIR / session.context_file
         if context_path.exists():
@@ -393,6 +408,7 @@ class SessionManager:
         
         self.sessions.pop(session_id, None)
         self._incognito_sessions.discard(session_id)
+        self._incognito_contexts.pop(session_id, None)
         
         console.print(f"[yellow]Deleted session {session_id}[/yellow]")
         return True

@@ -338,7 +338,7 @@ opencode models | grep rlm-opencode
 
 ```bash
 # Use RLM-OpenCode model
-opencode -m rlm-opencode/z_ai_xhigh_coding_plan.glm-5
+opencode -m rlm-opencode/z_ai_xhigh_coding_plan.rlm-core-v1
 
 # The model now has access to tools:
 # - rlm_get_context(offset, length)
