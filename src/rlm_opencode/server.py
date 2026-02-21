@@ -588,20 +588,7 @@ async def _stream_with_tools(
         
         if not rlm_tool_calls:
             # No rlm_ tool calls — stream everything to opencode
-            # Stream content
-            if full_content:
-                for i in range(0, len(full_content), 50):
-                    chunk_text = full_content[i:i+50]
-                    data = {
-                        "id": chat_id,
-                        "object": "chat.completion.chunk",
-                        "created": created,
-                        "model": request.model,
-                        "choices": [{"index": 0, "delta": {"content": chunk_text}, "finish_reason": None}]
-                    }
-                    yield f"data: {json.dumps(data)}\n\n"
-            
-            # Stream reasoning
+            # Stream reasoning FIRST (model thinks before responding)
             if full_reasoning:
                 for i in range(0, len(full_reasoning), 50):
                     chunk_text = full_reasoning[i:i+50]
@@ -611,6 +598,19 @@ async def _stream_with_tools(
                         "created": created,
                         "model": request.model,
                         "choices": [{"index": 0, "delta": {"reasoning_content": chunk_text}, "finish_reason": None}]
+                    }
+                    yield f"data: {json.dumps(data)}\n\n"
+            
+            # Then stream content
+            if full_content:
+                for i in range(0, len(full_content), 50):
+                    chunk_text = full_content[i:i+50]
+                    data = {
+                        "id": chat_id,
+                        "object": "chat.completion.chunk",
+                        "created": created,
+                        "model": request.model,
+                        "choices": [{"index": 0, "delta": {"content": chunk_text}, "finish_reason": None}]
                     }
                     yield f"data: {json.dumps(data)}\n\n"
             
