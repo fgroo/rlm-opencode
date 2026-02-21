@@ -83,7 +83,7 @@ class ChatCompletionResponse(BaseModel):
 
 # Configurable capture thresholds (env vars)
 import os
-RLM_CAPTURE_MIN_CHARS = int(os.environ.get("RLM_CAPTURE_MIN_CHARS", "0"))     # 0 = capture all, 500 = skip small outputs
+RLM_CAPTURE_MIN_CHARS = int(os.environ.get("RLM_CAPTURE_MIN_CHARS", "500"))    # Min chars to capture (0 = all, 500 = skip small outputs)
 RLM_CAPTURE_MAX_CHARS = int(os.environ.get("RLM_CAPTURE_MAX_CHARS", "50000"))  # Max chars per entry
 
 

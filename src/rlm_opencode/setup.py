@@ -1,21 +1,14 @@
 #!/usr/bin/env python3
-"""RLM Session Setup Script for OpenCode integration.
+"""RLM-OpenCode Setup Script for OpenCode integration.
 
 This script adds RLM-OpenCode-wrapped versions of all your opencode models.
 RLM-OpenCode provides 40M+ character context for agentic workflows.
 
 Usage:
-    rlm-opencode-setup install           # Default mode (port 8769)
-    rlm-opencode-setup install --native  # Native mode (port 8769)
-    rlm-opencode-setup uninstall         # Remove proxy models
-    rlm-opencode-setup uninstall --native # Remove native models
-    rlm-opencode-setup status            # Check current status
-    rlm-opencode-setup serve             # Start proxy server
-    rlm-opencode-setup serve --native    # Start native server
-
-Modes:
-    Proxy mode (default): Wraps opencode run for context management
-    Native mode (--native): Calls model APIs directly, no proxy
+    rlm-opencode-setup install      # Install RLM-OpenCode provider
+    rlm-opencode-setup uninstall    # Remove RLM-OpenCode provider
+    rlm-opencode-setup status       # Check current status
+    rlm-opencode-setup serve        # Start the server
 
 The RLM-OpenCode server must be running for models to work.
 """
@@ -32,11 +25,10 @@ import httpx
 OPENCODE_CONFIG = Path.home() / ".config" / "opencode" / "opencode.json"
 RLM_CONTEXT_LIMIT = 40000000
 
-# Mode-specific settings
-PROXY_URL = "http://localhost:8769/v1"
-PROXY_PROVIDER_ID = "rlm-opencode"
-NATIVE_URL = "http://localhost:8769/v1"
-NATIVE_PROVIDER_ID = "rlm-native"
+# Server settings
+SERVER_URL = "http://localhost:8769/v1"
+SERVER_PORT = 8769
+PROVIDER_ID = "rlm-opencode"
 
 
 def get_opencode_models():
@@ -76,51 +68,22 @@ def save_config(config):
         json.dump(config, f, indent=2)
 
 
-def is_server_running(native: bool = False):
+def is_server_running():
     """Check if RLM-OpenCode server is running."""
-    port = 8769
     try:
-        response = httpx.get(f"http://localhost:{port}/health", timeout=2)
+        response = httpx.get(f"http://localhost:{SERVER_PORT}/health", timeout=2)
         return response.status_code == 200
     except:
         return False
 
 
-def is_rlm_server_running():
-    """Check if rlm-server (port 8765) is running."""
-    try:
-        response = httpx.get("http://localhost:8765/health", timeout=2)
-        return response.status_code == 200
-    except:
-        return False
-
-
-def get_mode_settings(native: bool = False) -> dict:
-    """Get mode-specific settings."""
-    if native:
-        return {
-            "provider_id": NATIVE_PROVIDER_ID,
-            "url": NATIVE_URL,
-            "port": 8769,
-            "name": "RLM-Native (direct API, context management)",
-            "description": "Native mode calls model APIs directly with context injection.",
-        }
-    return {
-        "provider_id": PROXY_PROVIDER_ID,
-        "url": PROXY_URL,
-        "port": 8769,
-        "name": "RLM-OpenCode (proxy, context management)",
-        "description": "Proxy mode wraps opencode run for context accumulation.",
-    }
-
-
-def build_model_info_from_config(config: dict, provider_id: str) -> dict:
+def build_model_info_from_config(config: dict) -> dict:
     """Build a lookup of model info from opencode.json providers."""
     model_info = {}
     
     providers = config.get("provider", {})
     for prov_id, provider_data in providers.items():
-        if prov_id in (provider_id, "rlm", "rlm-opencode", "rlm-native"):
+        if prov_id in (PROVIDER_ID, "rlm", "rlm-native"):
             continue
         
         models = provider_data.get("models", {})
@@ -156,34 +119,29 @@ def create_rlm_model_entry(model_id: str, config_key: str, original_info: dict |
     return entry
 
 
-def install(native: bool = False):
+def install():
     """Install RLM-OpenCode provider with all models."""
-    mode = get_mode_settings(native)
-    
     print("=" * 60)
-    print(f"RLM-OpenCode Setup - Installing ({'Native' if native else 'Proxy'} Mode)")
+    print("RLM-OpenCode Setup - Installing")
     print("=" * 60)
     print()
     
-    if not is_server_running(native):
-        print(f"RLM-OpenCode server is NOT RUNNING on port {mode['port']}")
+    if not is_server_running():
+        print(f"RLM-OpenCode server is NOT RUNNING on port {SERVER_PORT}")
         print()
         print("Starting server...")
-        if native:
-            os.system("nohup rlm-opencode serve --native > /tmp/rlm-native.log 2>&1 &")
-        else:
-            os.system("nohup rlm-opencode serve > /tmp/rlm-opencode.log 2>&1 &")
+        os.system(f"nohup rlm-opencode serve > /tmp/rlm-opencode.log 2>&1 &")
         
         for i in range(10):
             time.sleep(1)
-            if is_server_running(native):
-                print(f"Server started on http://localhost:{mode['port']}")
+            if is_server_running():
+                print(f"Server started on http://localhost:{SERVER_PORT}")
                 break
         else:
-            print(f"Failed to start server. Check /tmp/rlm-{'native' if native else 'session'}.log")
+            print("Failed to start server. Check /tmp/rlm-opencode.log")
             return 1
     else:
-        print(f"Server is running on port {mode['port']}")
+        print(f"Server is running on port {SERVER_PORT}")
     
     print()
     print("Fetching models from opencode...")
@@ -195,7 +153,7 @@ def install(native: bool = False):
     print(f"Found {len(all_models)} models from opencode CLI")
     
     config = load_config()
-    model_info_from_config = build_model_info_from_config(config, mode["provider_id"])
+    model_info_from_config = build_model_info_from_config(config)
     print(f"Found {len(model_info_from_config)} models with detailed info")
     print()
     
@@ -203,8 +161,14 @@ def install(native: bool = False):
     if "provider" not in config:
         config["provider"] = {}
     
+    # Clean up any legacy providers
+    for legacy_id in ("rlm", "rlm-native"):
+        if legacy_id in config["provider"]:
+            print(f"Removing legacy provider: {legacy_id}")
+            del config["provider"][legacy_id]
+    
     # Check for existing provider
-    existing = config["provider"].get(mode["provider_id"], {})
+    existing = config["provider"].get(PROVIDER_ID, {})
     if existing:
         existing_name = existing.get("name", "unknown")
         existing_count = len(existing.get("models", {}))
@@ -225,11 +189,11 @@ def install(native: bool = False):
             models_with_variants += 1
     
     # FULLY REPLACE the provider (idempotent)
-    config["provider"][mode["provider_id"]] = {
+    config["provider"][PROVIDER_ID] = {
         "npm": "@ai-sdk/openai-compatible",
-        "name": mode["name"],
+        "name": "RLM-OpenCode (context management)",
         "options": {
-            "baseURL": mode["url"]
+            "baseURL": SERVER_URL
         },
         "models": rlm_models
     }
@@ -239,43 +203,35 @@ def install(native: bool = False):
     print(f"Installed {len(rlm_models)} models ({models_with_variants} with variants)")
     print()
     print("=" * 60)
-    print(f"RLM-{'Native' if native else 'Session'} is now available!")
+    print("RLM-OpenCode is now available!")
     print("=" * 60)
     print()
     print("Usage:")
-    print(f"  opencode run -m {mode['provider_id']}/<provider>.<model>")
+    print(f"  opencode -m {PROVIDER_ID}/<provider>.<model>")
     print()
-    print("Examples:")
-    print(f"  opencode run -m {mode['provider_id']}/rlm-internal.rlm-core-v1")
-    print(f"  opencode run -m {mode['provider_id']}/openai.gpt-4o")
-    print()
-    print(mode["description"])
-    print()
-    print(f"To remove: rlm-opencode-setup uninstall{' --native' if native else ''}")
+    print("To remove: rlm-opencode-setup uninstall")
     
     return 0
 
 
-def uninstall(native: bool = False):
-    """Remove RLM provider from config."""
-    mode = get_mode_settings(native)
-    
+def uninstall():
+    """Remove RLM-OpenCode provider from config."""
     print("=" * 60)
-    print(f"RLM-OpenCode Setup - Uninstalling ({'Native' if native else 'Proxy'} Mode)")
+    print("RLM-OpenCode Setup - Uninstalling")
     print("=" * 60)
     print()
     
     config = load_config()
     
-    if "provider" not in config or mode["provider_id"] not in config["provider"]:
-        print(f"Provider '{mode['provider_id']}' is not installed.")
+    if "provider" not in config or PROVIDER_ID not in config["provider"]:
+        print(f"Provider '{PROVIDER_ID}' is not installed.")
         return 0
     
-    existing = config["provider"].get(mode["provider_id"], {})
+    existing = config["provider"].get(PROVIDER_ID, {})
     existing_name = existing.get("name", "unknown")
     models_count = len(existing.get("models", {}))
     
-    del config["provider"][mode["provider_id"]]
+    del config["provider"][PROVIDER_ID]
     save_config(config)
     
     print(f"Removed '{existing_name}' ({models_count} models)")
@@ -289,103 +245,83 @@ def uninstall(native: bool = False):
 def status():
     """Check RLM-OpenCode status."""
     print("=" * 60)
-    print("RLM-OpenCode Setup - Status")
+    print("RLM-OpenCode Status")
     print("=" * 60)
     print()
     
     print(f"Config: {OPENCODE_CONFIG}")
     print()
     
-    # Check servers
-    print("Servers:")
-    for name, port, native in [
-        ("RLM-OpenCode (Proxy)", 8767, False),
-        ("RLM-OpenCode (Native)", 8768, True),
-        ("RLM-Server", 8765, None),
-    ]:
-        if native is None:
-            running = is_rlm_server_running()
-        else:
-            running = is_server_running(native)
-        
-        status_str = "RUNNING" if running else "NOT RUNNING"
-        print(f"  {name} (port {port}): {status_str}")
-        
-        if running:
-            try:
-                response = httpx.get(f"http://localhost:{port}/health", timeout=2)
-                data = response.json()
-                mode = data.get("mode", "unknown")
-                print(f"    Version: {data.get('version')}, Mode: {mode}")
-            except:
-                pass
+    # Check server
+    running = is_server_running()
+    status_str = "RUNNING" if running else "NOT RUNNING"
+    print(f"Server (port {SERVER_PORT}): {status_str}")
+    
+    if running:
+        try:
+            response = httpx.get(f"http://localhost:{SERVER_PORT}/health", timeout=2)
+            data = response.json()
+            print(f"  Version: {data.get('version')}, Mode: {data.get('mode')}")
+        except:
+            pass
     
     print()
     
     config = load_config()
-    for provider_id, display_name in [(PROXY_PROVIDER_ID, "Proxy"), (NATIVE_PROVIDER_ID, "Native")]:
-        if "provider" in config and provider_id in config["provider"]:
-            provider = config["provider"][provider_id]
-            models = provider.get("models", {})
-            provider_name = provider.get("name", "unknown")
-            models_with_variants = sum(1 for m in models.values() if "variants" in m)
-            
-            print(f"Provider '{provider_id}' ({display_name}): INSTALLED")
-            print(f"  Name: {provider_name}")
-            print(f"  Models: {len(models)} ({models_with_variants} with variants)")
-            
-            if models:
-                print("  Sample models:")
-                for i, (model_id, model_info) in enumerate(models.items()):
-                    if i >= 3:
-                        print(f"    ... and {len(models) - 3} more")
-                        break
-                    variants_str = ""
-                    if "variants" in model_info:
-                        variants = list(model_info["variants"].keys())
-                        variants_str = f" [{', '.join(variants[:3])}...]"
-                    print(f"    {provider_id}/{model_id}{variants_str}")
-            print()
-        else:
-            print(f"Provider '{provider_id}' ({display_name}): NOT INSTALLED")
+    if "provider" in config and PROVIDER_ID in config["provider"]:
+        provider = config["provider"][PROVIDER_ID]
+        models = provider.get("models", {})
+        provider_name = provider.get("name", "unknown")
+        models_with_variants = sum(1 for m in models.values() if "variants" in m)
+        
+        print(f"Provider '{PROVIDER_ID}': INSTALLED")
+        print(f"  Name: {provider_name}")
+        print(f"  Models: {len(models)} ({models_with_variants} with variants)")
+        
+        if models:
+            print("  Sample models:")
+            for i, (model_id, model_info) in enumerate(models.items()):
+                if i >= 3:
+                    print(f"    ... and {len(models) - 3} more")
+                    break
+                print(f"    {PROVIDER_ID}/{model_id}")
+        print()
+    else:
+        print(f"Provider '{PROVIDER_ID}': NOT INSTALLED")
     
     print()
     print("Commands:")
-    print("  rlm-opencode-setup install           - Install proxy mode")
-    print("  rlm-opencode-setup install --native  - Install native mode")
-    print("  rlm-opencode-setup uninstall         - Remove proxy")
-    print("  rlm-opencode-setup uninstall --native - Remove native")
-    print("  rlm-opencode-setup serve             - Start proxy server")
-    print("  rlm-opencode-setup serve --native    - Start native server")
+    print("  rlm-opencode-setup install      - Install provider")
+    print("  rlm-opencode-setup uninstall    - Remove provider")
+    print("  rlm-opencode-setup status       - Check status")
+    print("  rlm-opencode-setup serve        - Start server")
     
     return 0
 
 
-def serve(native: bool = False):
+def serve():
     """Start the RLM-OpenCode server."""
-    mode = get_mode_settings(native)
-    
-    if is_server_running(native):
-        print(f"Server is already running on port {mode['port']}!")
+    if is_server_running():
+        print(f"Server is already running on port {SERVER_PORT}!")
         try:
-            response = httpx.get(f"http://localhost:{mode['port']}/health", timeout=2)
+            response = httpx.get(f"http://localhost:{SERVER_PORT}/health", timeout=2)
             data = response.json()
-            print(f"URL: http://localhost:{mode['port']}")
+            print(f"URL: http://localhost:{SERVER_PORT}")
             print(f"Version: {data.get('version')}, Mode: {data.get('mode')}")
         except:
             pass
         return 0
     
-    print(f"Starting RLM-OpenCode server ({'Native' if native else 'Proxy'} mode)...")
+    print("Starting RLM-OpenCode server...")
     
-    log_file = f"/tmp/rlm-{'native' if native else 'session'}.log"
-    cmd = f"nohup rlm-opencode serve{' --native' if native else ''} > {log_file} 2>&1 &"
+    log_file = "/tmp/rlm-opencode.log"
+    cmd = f"nohup rlm-opencode serve > {log_file} 2>&1 &"
     os.system(cmd)
     
     for i in range(10):
         time.sleep(1)
-        if is_server_running(native):
-            print(f"Server started on http://localhost:{mode['port']}")
+        if is_server_running():
+            print(f"Server started on http://localhost:{SERVER_PORT}")
             return 0
     
     print(f"Failed to start server. Check {log_file}")
@@ -393,9 +329,7 @@ def serve(native: bool = False):
 
 
 def main():
-    # Parse --native flag
-    native = "--native" in sys.argv or "-n" in sys.argv
-    args = [a for a in sys.argv[1:] if a not in ("--native", "-n")]
+    args = sys.argv[1:]
     
     if not args:
         print(__doc__)
@@ -404,17 +338,16 @@ def main():
     command = args[0].lower()
     
     if command in ("install", "add", "enable"):
-        return install(native)
+        return install()
     elif command in ("uninstall", "remove", "disable"):
-        return uninstall(native)
+        return uninstall()
     elif command in ("status", "check"):
         return status()
     elif command in ("serve", "start"):
-        return serve(native)
+        return serve()
     else:
         print(f"Unknown command: {command}")
         print("Use: install, uninstall, status, or serve")
-        print("Add --native for native mode")
         return 1
 
 
