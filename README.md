@@ -30,7 +30,7 @@ rlm-opencode-setup install
 ### Use
 
 ```bash
-opencode -m rlm-opencode/z_ai_xhigh_coding_plan.rlm-core-v1
+opencode -m rlm-opencode/rlm-internal.rlm-core-v1
 ```
 
 ## How It Works

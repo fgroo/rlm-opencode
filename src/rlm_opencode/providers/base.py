@@ -158,7 +158,7 @@ class BaseProvider(ABC):
                 
                 # Provider -> MCP server mappings
                 mcp_mappings = {
-                    "z_ai_xhigh_coding_plan": "zai-mcp-server",
+                    "rlm-internal": "zai-mcp-server",
                     "zai-coding-plan": "zai-mcp-server",
                     "zhipu": "zai-mcp-server",
                 }
@@ -192,7 +192,7 @@ class BaseProvider(ABC):
             "anthropic": "ANTHROPIC_API_KEY",
             "openrouter": "OPENROUTER_API_KEY",
             "zhipu": "ZHIPU_API_KEY",
-            "z_ai_xhigh_coding_plan": "Z_AI_API_KEY",
+            "rlm-internal": "Z_AI_API_KEY",
             "zai-coding-plan": "Z_AI_API_KEY",
             "google": "GOOGLE_API_KEY",
         }
