@@ -172,22 +172,39 @@ def truncate_messages(
 
 
 # Session detection
-def get_or_create_session() -> str:
+def _fingerprint_messages(messages: list) -> str:
+    """Create a stable fingerprint from the first user message.
+    
+    Each opencode chat has a unique first user message, so this
+    reliably identifies which chat is making the request — no
+    external DB heuristic needed.
+    """
+    import hashlib
+    for msg in messages:
+        role = msg.role if hasattr(msg, 'role') else msg.get('role', '')
+        content = msg.content if hasattr(msg, 'content') else msg.get('content', '')
+        if role == "user" and content:
+            text = content if isinstance(content, str) else json.dumps(content)
+            return hashlib.sha256(text.encode()).hexdigest()[:16]
+    return ""
+
+
+def get_or_create_session(messages: list = None) -> str:
     """Get or create session bound to the current opencode chat.
     
-    Each opencode chat gets its own isolated RLM session.
-    Two agents in the same directory will NOT share context.
+    Uses request fingerprinting: hashes the first user message to
+    create a stable session identity. This avoids the broken heuristic
+    of guessing which opencode session is active from the DB.
     """
-    from rlm_opencode.detector import get_current_session
+    fingerprint = _fingerprint_messages(messages) if messages else ""
     
-    detected = get_current_session()
-    if detected and detected.get("id"):
-        # Bind by opencode's unique chat session ID (per-chat isolation)
+    if fingerprint:
+        # Check if we already have a session for this fingerprint
         session = session_manager.get_or_create_session_by_opencode_id(
-            detected["id"],
-            directory=detected.get("directory"),
+            fingerprint,
+            directory=None,
         )
-        console.print(f"[cyan]Session: {session.id} (opencode chat: {detected['id'][:12]}...)[/cyan]")
+        console.print(f"[cyan]Session: {session.id} (fingerprint: {fingerprint})[/cyan]")
         return session.id
     
     session = session_manager.create_session()
@@ -360,7 +377,7 @@ async def chat_completions(request: ChatCompletionRequest, x_rlm_session: str | 
         session_id = x_rlm_session
         console.print(f"[cyan]Using provided session header: {session_id}[/cyan]")
     else:
-        session_id = get_or_create_session()
+        session_id = get_or_create_session(request.messages)
         
     session = session_manager.get_session(session_id)
     
