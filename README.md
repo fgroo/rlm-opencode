@@ -123,14 +123,55 @@ rlm-opencode/
 └── pyproject.toml
 ```
 
+## Setup Details
+
+`rlm-opencode-setup install` modifies your `~/.config/opencode/opencode.json`:
+
+- Adds an **`rlm-opencode`** provider pointing to `http://localhost:8769/v1`
+- Creates model entries for **every** model in your existing OpenCode config under the `rlm-opencode/` prefix
+- Sets context limit to **67M tokens** (~300M chars) — tells OpenCode to send the full conversation history
+- The server truncates this to fit the upstream model's real context window (default 128K tokens)
+
+After setup, all your models are available as `rlm-opencode/<provider>.<model>`:
+
+```bash
+opencode -m rlm-opencode/your_provider.your_model
+```
+
+## Configuration
+
+All thresholds are configurable via environment variables:
+
+| Env Var | Default | Description |
+|---------|---------|-------------|
+| `RLM_UPSTREAM_MAX_TOKENS` | 128,000 | Upstream model's real context window |
+| `RLM_TOKEN_RESERVE` | 16,000 | Reserved tokens for response + tools |
+| `RLM_CAPTURE_MIN_CHARS` | 500 | Min chars to capture tool results |
+| `RLM_USER_MIN_CHARS` | 0 | Min chars to capture user messages (0 = all) |
+| `RLM_ASSISTANT_MIN_CHARS` | 50 | Min chars to capture assistant responses |
+| `RLM_CAPTURE_MAX_CHARS` | 50,000 | Max chars per context entry |
+
+## CLI Commands
+
+```bash
+rlm-opencode serve          # Start server (foreground)
+rlm-opencode serve --bg     # Start in background
+rlm-opencode stop           # Stop the server
+rlm-opencode restart        # Stop → reinstall → restart
+rlm-opencode sessions       # List sessions with context stats
+rlm-opencode status         # Server status + env config
+rlm-opencode log -f         # Follow server log
+rlm-opencode clear --all    # Clear all sessions and logs
+```
+
 ## Session Data
 
 Sessions are stored in `~/.local/share/rlm-opencode/`:
 
-- `sessions/` - Context files and metadata
-- `mappings/` - Directory → Session mapping
+- `sessions.db` — Session metadata (SQLite)
+- `contexts/` — Context files (one per session, append-only)
 
-Context accumulates across OpenCode calls, persisting between sessions.
+Context accumulates across OpenCode calls, persisting between sessions. Each OpenCode chat gets its own isolated session via request fingerprinting.
 
 ## License
 
