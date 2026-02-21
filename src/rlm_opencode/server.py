@@ -6,9 +6,9 @@ This implements the RLM paper's approach:
 3. Model calls tools (rlm_get_context, rlm_search) to access context
 4. Server intercepts tool calls, returns context chunks
 
-Key difference from rlm-session:
-- rlm-session: Injects full context into prompt (limited by model window)
-- rlm-opencode: Model requests context via tools (unlimited context)
+Key difference from legacy context injection:
+- Old approach: Injects full context into prompt (limited by model window)
+- RLM-OpenCode: Model requests context via tools (unlimited context)
 """
 import json
 import time
