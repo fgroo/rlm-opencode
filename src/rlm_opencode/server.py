@@ -298,7 +298,7 @@ def capture_content(messages: list[ChatMessage], session_id: str):
         
         elif msg.role == "assistant" and msg.content:
             content = _extract_text(msg.content)
-            if not msg.tool_calls and len(content) > RLM_ASSISTANT_MIN_CHARS:
+            if len(content) > RLM_ASSISTANT_MIN_CHARS:
                 session_manager.append(
                     session_id,
                     "assistant_response",
@@ -601,7 +601,20 @@ async def _stream_with_tools(
                     }
                     yield f"data: {json.dumps(data)}\n\n"
             
-            # Then stream content
+            # Then stream tool calls (actions execute before text response)
+            if non_rlm_tool_calls:
+                for i, tc in enumerate(non_rlm_tool_calls):
+                    tc_with_index = {**tc, "index": i}
+                    data = {
+                        "id": chat_id,
+                        "object": "chat.completion.chunk",
+                        "created": created,
+                        "model": request.model,
+                        "choices": [{"index": 0, "delta": {"tool_calls": [tc_with_index]}, "finish_reason": None}]
+                    }
+                    yield f"data: {json.dumps(data)}\n\n"
+            
+            # Finally stream content (the visible response)
             if full_content:
                 for i in range(0, len(full_content), 50):
                     chunk_text = full_content[i:i+50]
@@ -611,19 +624,6 @@ async def _stream_with_tools(
                         "created": created,
                         "model": request.model,
                         "choices": [{"index": 0, "delta": {"content": chunk_text}, "finish_reason": None}]
-                    }
-                    yield f"data: {json.dumps(data)}\n\n"
-            
-            # Stream non-rlm tool calls
-            if non_rlm_tool_calls:
-                for i, tc in enumerate(non_rlm_tool_calls):
-                    tc_with_index = {**tc, "index": i}  # OpenCode requires index field
-                    data = {
-                        "id": chat_id,
-                        "object": "chat.completion.chunk",
-                        "created": created,
-                        "model": request.model,
-                        "choices": [{"index": 0, "delta": {"tool_calls": [tc_with_index]}, "finish_reason": None}]
                     }
                     yield f"data: {json.dumps(data)}\n\n"
             
