@@ -272,7 +272,7 @@ def capture_content(messages: list[ChatMessage], session_id: str):
         
         elif msg.role == "user" and msg.content:
             content = msg.content if isinstance(msg.content, str) else str(msg.content)
-            if len(content) >= RLM_CAPTURE_MIN_CHARS:
+            if content.strip():  # Always capture user messages (no min threshold — first prompt defines session)
                 session_manager.append(
                     session_id,
                     "user_message",
@@ -596,11 +596,11 @@ async def _stream_with_tools(
             }
             yield f"data: {json.dumps(data)}\n\n"
             
-            # Capture into RLM context
+            # Capture thinking into RLM context (opencode strips these from message history)
             if full_reasoning and len(full_reasoning) >= RLM_CAPTURE_MIN_CHARS:
                 session_manager.append(session_id, "thinking", f"[Thinking]\n{full_reasoning[:RLM_CAPTURE_MAX_CHARS]}")
-            if full_content and not collected_tool_calls and len(full_content) > 50:
-                session_manager.append(session_id, "assistant_response", f"[Assistant]\n{full_content[:RLM_CAPTURE_MAX_CHARS]}")
+            # NOTE: assistant responses are NOT captured here — capture_content handles them
+            # on the next request to avoid duplication
             
             console.print(f"[green][_stream] Complete (iter {iteration+1}): {len(full_content)} chars, {len(non_rlm_tool_calls)} tool calls[/green]")
             yield "data: [DONE]\n\n"
