@@ -81,6 +81,12 @@ class ChatCompletionResponse(BaseModel):
     usage: dict = Field(default_factory=lambda: {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0})
 
 
+# Configurable capture thresholds (env vars)
+import os
+RLM_CAPTURE_MIN_CHARS = int(os.environ.get("RLM_CAPTURE_MIN_CHARS", "0"))     # 0 = capture all, 500 = skip small outputs
+RLM_CAPTURE_MAX_CHARS = int(os.environ.get("RLM_CAPTURE_MAX_CHARS", "50000"))  # Max chars per entry
+
+
 # Session detection
 def get_or_create_session() -> str:
     """Get or create session bound to the current opencode chat.
@@ -126,16 +132,14 @@ def capture_content(messages: list[ChatMessage], session_id: str):
     
     for msg in messages:
         if msg.role == "tool" and msg.content:
-            # Capture ALL tool results — even small outputs like "main" from
-            # `git branch` are important context for the model's memory
             tool_name = msg.name or tool_id_to_name.get(msg.tool_call_id or "", "") or "external_tool"
             content = msg.content if isinstance(msg.content, str) else str(msg.content)
-            if content.strip():  # Skip empty results
+            if content.strip() and len(content) >= RLM_CAPTURE_MIN_CHARS:
                 session_manager.append(
                     session_id, 
                     "tool_result", 
-                    f"[Tool: {tool_name}]\n{content[:50000]}",
-                    metadata={"tool": tool_name, "truncated": len(content) > 50000}
+                    f"[Tool: {tool_name}]\n{content[:RLM_CAPTURE_MAX_CHARS]}",
+                    metadata={"tool": tool_name, "truncated": len(content) > RLM_CAPTURE_MAX_CHARS}
                 )
         
         elif msg.role == "assistant" and msg.content and not msg.tool_calls:
@@ -145,8 +149,8 @@ def capture_content(messages: list[ChatMessage], session_id: str):
                 session_manager.append(
                     session_id,
                     "assistant_response",
-                    f"[Assistant]\n{content[:50000]}",
-                    metadata={"truncated": len(content) > 50000}
+                    f"[Assistant]\n{content[:RLM_CAPTURE_MAX_CHARS]}",
+                    metadata={"truncated": len(content) > RLM_CAPTURE_MAX_CHARS}
                 )
 
 
