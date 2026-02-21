@@ -616,6 +616,15 @@ async def _stream_with_tools(
             result_text = json.dumps(result.result, indent=2) if result.success else f"Error: {result.error}"
             console.print(f"[dim]  {tool_name}({args}) → {len(result_text)} chars[/dim]")
             
+            # Capture the rlm tool invocation into context
+            summary = format_tool_result_for_message(result)
+            session_manager.append(
+                session_id,
+                "rlm_tool",
+                f"[{tool_name}]\nQuery: {json.dumps(args)}\nResult: {summary}\n{result_text[:RLM_CAPTURE_MAX_CHARS]}",
+                metadata={"tool": tool_name}
+            )
+            
             current_messages.append({
                 "role": "tool",
                 "tool_call_id": tc["id"],
