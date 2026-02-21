@@ -106,10 +106,15 @@ def get_or_create_session() -> str:
 
 
 def capture_content(messages: list[ChatMessage], session_id: str):
-    """Capture tool results into session context."""
+    """Capture conversation content into session context.
+    
+    Captures:
+    - ALL tool results (file reads, command outputs, search results)
+    - Assistant text responses (summaries, analysis, etc.)
+    
+    This builds the model's long-term memory across the chat.
+    """
     # Build a tool_call_id → tool_name lookup from assistant messages
-    # OpenCode sends tool results without the 'name' field — the name
-    # is only in the preceding assistant message's tool_calls array.
     tool_id_to_name: dict[str, str] = {}
     for msg in messages:
         if msg.role == "assistant" and msg.tool_calls:
@@ -121,15 +126,27 @@ def capture_content(messages: list[ChatMessage], session_id: str):
     
     for msg in messages:
         if msg.role == "tool" and msg.content:
-            # Resolve name: try msg.name first, then lookup by tool_call_id
+            # Capture ALL tool results — even small outputs like "main" from
+            # `git branch` are important context for the model's memory
             tool_name = msg.name or tool_id_to_name.get(msg.tool_call_id or "", "") or "external_tool"
             content = msg.content if isinstance(msg.content, str) else str(msg.content)
-            if len(content) > 500:
+            if content.strip():  # Skip empty results
                 session_manager.append(
                     session_id, 
                     "tool_result", 
                     f"[Tool: {tool_name}]\n{content[:50000]}",
                     metadata={"tool": tool_name, "truncated": len(content) > 50000}
+                )
+        
+        elif msg.role == "assistant" and msg.content and not msg.tool_calls:
+            # Capture assistant text responses (final answers, not tool-calling turns)
+            content = msg.content if isinstance(msg.content, str) else str(msg.content)
+            if len(content) > 50:  # Skip trivial responses
+                session_manager.append(
+                    session_id,
+                    "assistant_response",
+                    f"[Assistant]\n{content[:50000]}",
+                    metadata={"truncated": len(content) > 50000}
                 )
 
 
