@@ -99,9 +99,22 @@ def get_or_create_session() -> str:
 
 def capture_content(messages: list[ChatMessage], session_id: str):
     """Capture tool results into session context."""
+    # Build a tool_call_id → tool_name lookup from assistant messages
+    # OpenCode sends tool results without the 'name' field — the name
+    # is only in the preceding assistant message's tool_calls array.
+    tool_id_to_name: dict[str, str] = {}
+    for msg in messages:
+        if msg.role == "assistant" and msg.tool_calls:
+            for tc in msg.tool_calls:
+                tc_id = tc.get("id", "")
+                tc_name = tc.get("function", {}).get("name", "")
+                if tc_id and tc_name:
+                    tool_id_to_name[tc_id] = tc_name
+    
     for msg in messages:
         if msg.role == "tool" and msg.content:
-            tool_name = msg.name or "unknown_tool"
+            # Resolve name: try msg.name first, then lookup by tool_call_id
+            tool_name = msg.name or tool_id_to_name.get(msg.tool_call_id or "", "") or "external_tool"
             content = msg.content if isinstance(msg.content, str) else str(msg.content)
             if len(content) > 500:
                 session_manager.append(
