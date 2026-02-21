@@ -578,13 +578,14 @@ async def _stream_with_tools(
             
             # Stream non-rlm tool calls
             if non_rlm_tool_calls:
-                for tc in non_rlm_tool_calls:
+                for i, tc in enumerate(non_rlm_tool_calls):
+                    tc_with_index = {**tc, "index": i}  # OpenCode requires index field
                     data = {
                         "id": chat_id,
                         "object": "chat.completion.chunk",
                         "created": created,
                         "model": request.model,
-                        "choices": [{"index": 0, "delta": {"tool_calls": [tc]}, "finish_reason": None}]
+                        "choices": [{"index": 0, "delta": {"tool_calls": [tc_with_index]}, "finish_reason": None}]
                     }
                     yield f"data: {json.dumps(data)}\n\n"
             
