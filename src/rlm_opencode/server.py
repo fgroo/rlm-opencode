@@ -450,86 +450,201 @@ async def _stream_with_tools(
     request: ChatCompletionRequest,
     session_id: str,
 ) -> AsyncGenerator[str, None]:
-    """Stream response with RLM tool support."""
+    """Stream response with internal RLM tool execution.
+    
+    Key architecture: rlm_ tool calls are intercepted and executed
+    server-side. Only non-rlm responses are streamed to opencode.
+    
+    Loop:
+    1. Query upstream model
+    2. If model calls rlm_ tools → execute locally, feed results back, goto 1
+    3. If model produces text or non-rlm tool calls → stream to opencode
+    """
     chat_id = f"chatcmpl-{uuid4().hex[:8]}"
     created = int(time.time())
     
     console.print(f"[dim cyan][_stream] Starting for {model_id}...[/dim cyan]")
     
-    collected_content = []
-    collected_tool_calls = []
-    collected_reasoning = []
-    finish_reason = None
+    # Get context for rlm tool execution
+    context = session_manager.get_context(session_id)
+    session = session_manager.get_session(session_id)
+    session_entries = [e.__dict__ if hasattr(e, '__dict__') else e for e in (session.entries if session else [])]
+    session_stats = session.stats.__dict__ if session and session.stats else None
     
-    try:
-        async for chunk in provider.stream(
-            model_id,
-            messages,
-            temperature=request.temperature or 1.0,
-            max_tokens=request.max_tokens,
-            tools=tools if tools else None,
-        ):
-            if chunk.content:
-                collected_content.append(chunk.content)
-            if chunk.tool_calls:
-                collected_tool_calls.extend(chunk.tool_calls)
-            if chunk.reasoning:
-                collected_reasoning.append(chunk.reasoning)
-            if chunk.finish_reason:
-                finish_reason = chunk.finish_reason
+    current_messages = list(messages)
+    max_iterations = 10  # Prevent infinite loops
+    
+    for iteration in range(max_iterations):
+        # Collect full response from upstream model
+        collected_content = []
+        collected_tool_calls: list[dict] = []
+        collected_reasoning = []
+        finish_reason = None
+        
+        try:
+            async for chunk in provider.stream(
+                model_id,
+                current_messages,
+                temperature=request.temperature or 1.0,
+                max_tokens=request.max_tokens,
+                tools=tools if tools else None,
+            ):
+                if chunk.content:
+                    collected_content.append(chunk.content)
+                if chunk.reasoning:
+                    collected_reasoning.append(chunk.reasoning)
+                if chunk.finish_reason:
+                    finish_reason = chunk.finish_reason
+                
+                # Accumulate tool calls from streaming deltas
+                if chunk.tool_calls:
+                    for tc_delta in chunk.tool_calls:
+                        idx = tc_delta.get("index", 0)
+                        while len(collected_tool_calls) <= idx:
+                            collected_tool_calls.append({"id": "", "type": "function", "function": {"name": "", "arguments": ""}})
+                        
+                        tc = collected_tool_calls[idx]
+                        if "id" in tc_delta:
+                            tc["id"] = tc_delta["id"]
+                        if "function" in tc_delta:
+                            fn = tc_delta["function"]
+                            if "name" in fn:
+                                tc["function"]["name"] += fn["name"]
+                            if "arguments" in fn:
+                                tc["function"]["arguments"] += fn["arguments"]
+        except Exception as e:
+            console.print(f"[red][_stream] Error: {e}[/red]")
+            error_data = {
+                "id": chat_id,
+                "object": "error",
+                "error": {"message": str(e), "type": "stream_error"}
+            }
+            yield f"data: {json.dumps(error_data)}\n\n"
+            return
+        
+        full_content = "".join(collected_content)
+        full_reasoning = "".join(collected_reasoning)
+        
+        # Check if any tool calls are rlm_ tools
+        rlm_tool_calls = [tc for tc in collected_tool_calls if tc["function"]["name"].startswith("rlm_")]
+        non_rlm_tool_calls = [tc for tc in collected_tool_calls if not tc["function"]["name"].startswith("rlm_")]
+        
+        if not rlm_tool_calls:
+            # No rlm_ tool calls — stream everything to opencode
+            # Stream content
+            if full_content:
+                for i in range(0, len(full_content), 50):
+                    chunk_text = full_content[i:i+50]
+                    data = {
+                        "id": chat_id,
+                        "object": "chat.completion.chunk",
+                        "created": created,
+                        "model": request.model,
+                        "choices": [{"index": 0, "delta": {"content": chunk_text}, "finish_reason": None}]
+                    }
+                    yield f"data: {json.dumps(data)}\n\n"
             
-            delta = {}
-            if chunk.content:
-                delta["content"] = chunk.content
-            if chunk.tool_calls:
-                delta["tool_calls"] = chunk.tool_calls
-            if chunk.reasoning:
-                delta["reasoning_content"] = chunk.reasoning
+            # Stream reasoning
+            if full_reasoning:
+                for i in range(0, len(full_reasoning), 50):
+                    chunk_text = full_reasoning[i:i+50]
+                    data = {
+                        "id": chat_id,
+                        "object": "chat.completion.chunk",
+                        "created": created,
+                        "model": request.model,
+                        "choices": [{"index": 0, "delta": {"reasoning_content": chunk_text}, "finish_reason": None}]
+                    }
+                    yield f"data: {json.dumps(data)}\n\n"
             
+            # Stream non-rlm tool calls
+            if non_rlm_tool_calls:
+                for tc in non_rlm_tool_calls:
+                    data = {
+                        "id": chat_id,
+                        "object": "chat.completion.chunk",
+                        "created": created,
+                        "model": request.model,
+                        "choices": [{"index": 0, "delta": {"tool_calls": [tc]}, "finish_reason": None}]
+                    }
+                    yield f"data: {json.dumps(data)}\n\n"
+            
+            # Send finish
             data = {
                 "id": chat_id,
                 "object": "chat.completion.chunk",
                 "created": created,
                 "model": request.model,
-                "choices": [{
-                    "index": 0,
-                    "delta": delta,
-                    "finish_reason": chunk.finish_reason,
-                }]
+                "choices": [{"index": 0, "delta": {}, "finish_reason": finish_reason or "stop"}]
             }
             yield f"data: {json.dumps(data)}\n\n"
+            
+            # Capture into RLM context
+            if full_reasoning and len(full_reasoning) >= RLM_CAPTURE_MIN_CHARS:
+                session_manager.append(session_id, "thinking", f"[Thinking]\n{full_reasoning[:RLM_CAPTURE_MAX_CHARS]}")
+            if full_content and not collected_tool_calls and len(full_content) > 50:
+                session_manager.append(session_id, "assistant_response", f"[Assistant]\n{full_content[:RLM_CAPTURE_MAX_CHARS]}")
+            
+            console.print(f"[green][_stream] Complete (iter {iteration+1}): {len(full_content)} chars, {len(non_rlm_tool_calls)} tool calls[/green]")
+            yield "data: [DONE]\n\n"
+            return
         
-        # Capture the model's response into RLM context
-        full_content = "".join(collected_content)
-        full_reasoning = "".join(collected_reasoning)
+        # rlm_ tool calls found — execute locally and loop back
+        console.print(f"[cyan][_stream] Iteration {iteration+1}: executing {len(rlm_tool_calls)} rlm tool(s) locally[/cyan]")
         
-        if full_reasoning and len(full_reasoning) >= RLM_CAPTURE_MIN_CHARS:
-            session_manager.append(
-                session_id,
-                "thinking",
-                f"[Thinking]\n{full_reasoning[:RLM_CAPTURE_MAX_CHARS]}",
-                metadata={"truncated": len(full_reasoning) > RLM_CAPTURE_MAX_CHARS}
+        # Refresh context (may have been updated)
+        context = session_manager.get_context(session_id)
+        
+        # Build assistant message with tool calls
+        assistant_msg = {"role": "assistant", "content": full_content or None, "tool_calls": collected_tool_calls}
+        current_messages.append(assistant_msg)
+        
+        # Execute each rlm_ tool and add results
+        for tc in rlm_tool_calls:
+            tool_name = tc["function"]["name"]
+            try:
+                args = json.loads(tc["function"]["arguments"]) if tc["function"]["arguments"] else {}
+            except json.JSONDecodeError:
+                args = {}
+            
+            result = execute_context_tool(
+                tool_name, args, context,
+                session_stats=session_stats,
+                session_entries=session_entries,
             )
+            
+            result_text = json.dumps(result.result, indent=2) if result.success else f"Error: {result.error}"
+            console.print(f"[dim]  {tool_name}({args}) → {len(result_text)} chars[/dim]")
+            
+            current_messages.append({
+                "role": "tool",
+                "tool_call_id": tc["id"],
+                "content": result_text,
+            })
         
-        if full_content and not collected_tool_calls and len(full_content) > 50:
-            session_manager.append(
-                session_id,
-                "assistant_response",
-                f"[Assistant]\n{full_content[:RLM_CAPTURE_MAX_CHARS]}",
-                metadata={"truncated": len(full_content) > RLM_CAPTURE_MAX_CHARS}
-            )
-        
-        console.print(f"[green][_stream] Complete: {len(full_content)} chars, {len(collected_tool_calls)} tool calls[/green]")
-        yield "data: [DONE]\n\n"
-        
-    except Exception as e:
-        console.print(f"[red][_stream] Error: {e}[/red]")
-        error_data = {
-            "id": chat_id,
-            "object": "error",
-            "error": {"message": str(e), "type": "stream_error"}
-        }
-        yield f"data: {json.dumps(error_data)}\n\n"
+        # Also add non-rlm tool results as empty (opencode will handle them)
+        # Actually, if there are non-rlm tool calls mixed with rlm ones,
+        # we need to handle them: pass the rlm results back to the model
+        # and let it continue. Non-rlm tool calls shouldn't happen in the
+        # same turn, but if they do, add dummy results.
+        for tc in non_rlm_tool_calls:
+            current_messages.append({
+                "role": "tool",
+                "tool_call_id": tc["id"],
+                "content": "[Pending: this tool will be executed by the host agent]",
+            })
+    
+    # Max iterations reached
+    console.print(f"[yellow][_stream] Max iterations ({max_iterations}) reached[/yellow]")
+    data = {
+        "id": chat_id,
+        "object": "chat.completion.chunk",
+        "created": created,
+        "model": request.model,
+        "choices": [{"index": 0, "delta": {"content": "[RLM: Maximum tool iterations reached]"}, "finish_reason": "stop"}]
+    }
+    yield f"data: {json.dumps(data)}\n\n"
+    yield "data: [DONE]\n\n"
 
 
 def run_server():
