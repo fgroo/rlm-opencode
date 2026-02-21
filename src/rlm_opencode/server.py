@@ -297,15 +297,8 @@ def capture_content(messages: list[ChatMessage], session_id: str):
                 captured += 1
         
         elif msg.role == "assistant" and msg.content:
-            content = _extract_text(msg.content)
-            if len(content) > RLM_ASSISTANT_MIN_CHARS:
-                session_manager.append(
-                    session_id,
-                    "assistant_response",
-                    f"[Assistant]\n{content[:RLM_CAPTURE_MAX_CHARS]}",
-                    metadata={"truncated": len(content) > RLM_CAPTURE_MAX_CHARS}
-                )
-                captured += 1
+            # Skip — assistant responses are captured immediately in _stream_with_tools
+            pass
         
         elif msg.role == "user" and msg.content:
             content = _extract_text(msg.content)
@@ -640,8 +633,9 @@ async def _stream_with_tools(
             # Capture thinking into RLM context (opencode strips these from message history)
             if full_reasoning and len(full_reasoning) >= RLM_CAPTURE_MIN_CHARS:
                 session_manager.append(session_id, "thinking", f"[Thinking]\n{full_reasoning[:RLM_CAPTURE_MAX_CHARS]}")
-            # NOTE: assistant responses are NOT captured here — capture_content handles them
-            # on the next request to avoid duplication
+            # Capture assistant response immediately (not on next request)
+            if full_content and len(full_content) > RLM_ASSISTANT_MIN_CHARS:
+                session_manager.append(session_id, "assistant_response", f"[Assistant]\n{full_content[:RLM_CAPTURE_MAX_CHARS]}")
             
             console.print(f"[green][_stream] Complete (iter {iteration+1}): {len(full_content)} chars, {len(non_rlm_tool_calls)} tool calls[/green]")
             yield "data: [DONE]\n\n"
