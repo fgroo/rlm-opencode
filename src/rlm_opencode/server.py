@@ -83,8 +83,10 @@ class ChatCompletionResponse(BaseModel):
 
 # Configurable thresholds (env vars)
 import os
-RLM_CAPTURE_MIN_CHARS = int(os.environ.get("RLM_CAPTURE_MIN_CHARS", "500"))    # Min chars to capture (0 = all, 500 = skip small)
+RLM_CAPTURE_MIN_CHARS = int(os.environ.get("RLM_CAPTURE_MIN_CHARS", "500"))    # Min chars for tool results (0 = all)
 RLM_CAPTURE_MAX_CHARS = int(os.environ.get("RLM_CAPTURE_MAX_CHARS", "50000"))  # Max chars per entry
+RLM_USER_MIN_CHARS = int(os.environ.get("RLM_USER_MIN_CHARS", "0"))            # Min chars for user messages (0 = all)
+RLM_ASSISTANT_MIN_CHARS = int(os.environ.get("RLM_ASSISTANT_MIN_CHARS", "50")) # Min chars for assistant responses
 UPSTREAM_MAX_TOKENS = int(os.environ.get("RLM_UPSTREAM_MAX_TOKENS", "128000")) # Upstream model's real context window
 TOKEN_RESERVE = int(os.environ.get("RLM_TOKEN_RESERVE", "16000"))              # Reserve for response + tools
 
@@ -261,7 +263,7 @@ def capture_content(messages: list[ChatMessage], session_id: str):
         
         elif msg.role == "assistant" and msg.content:
             content = msg.content if isinstance(msg.content, str) else str(msg.content)
-            if not msg.tool_calls and len(content) > 50:
+            if not msg.tool_calls and len(content) > RLM_ASSISTANT_MIN_CHARS:
                 session_manager.append(
                     session_id,
                     "assistant_response",
@@ -272,7 +274,7 @@ def capture_content(messages: list[ChatMessage], session_id: str):
         
         elif msg.role == "user" and msg.content:
             content = msg.content if isinstance(msg.content, str) else str(msg.content)
-            if content.strip():  # Always capture user messages (no min threshold — first prompt defines session)
+            if content.strip() and len(content) >= RLM_USER_MIN_CHARS:  # Always capture user messages by default (threshold=0)
                 session_manager.append(
                     session_id,
                     "user_message",
