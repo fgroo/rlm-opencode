@@ -173,20 +173,56 @@ def truncate_messages(
     return result
 
 
+def _extract_text(content) -> str:
+    """Extract plain text from message content.
+    
+    Handles both formats:
+    - String: "hello world" → "hello world"
+    - Multimodal: [{"type": "text", "text": "hello"}, ...] → "hello"
+    
+    Strips system-reminder blocks which opencode injects.
+    """
+    if isinstance(content, str):
+        text = content
+    elif isinstance(content, list):
+        # Multimodal content — extract text parts only
+        parts = []
+        for part in content:
+            if isinstance(part, dict) and part.get("type") == "text":
+                t = part.get("text", "")
+                # Skip system-reminder blocks (opencode injects these)
+                if "<system-reminder>" in t:
+                    continue
+                parts.append(t)
+        text = "\n".join(parts) if parts else str(content)
+    else:
+        text = str(content)
+    
+    return text.strip()
+
+
+# Title generation requests from opencode — skip these
+_TITLE_PREFIXES = ("generate a title", "suggest a title", "create a title")
+
+
 # Session detection
 def _fingerprint_messages(messages: list) -> str:
-    """Create a stable fingerprint from the first user message.
+    """Create a stable fingerprint from the first REAL user message.
     
-    Each opencode chat has a unique first user message, so this
-    reliably identifies which chat is making the request — no
-    external DB heuristic needed.
+    Handles multimodal content, strips system-reminders, and
+    ignores opencode's internal title-generation requests.
     """
     import hashlib
     for msg in messages:
         role = msg.role if hasattr(msg, 'role') else msg.get('role', '')
         content = msg.content if hasattr(msg, 'content') else msg.get('content', '')
         if role == "user" and content:
-            text = content if isinstance(content, str) else json.dumps(content)
+            text = _extract_text(content)
+            if not text:
+                continue
+            # Skip title-generation requests (opencode internal)
+            if text.lower().startswith(_TITLE_PREFIXES):
+                continue
             return hashlib.sha256(text.encode()).hexdigest()[:16]
     return ""
 
@@ -194,14 +230,13 @@ def _fingerprint_messages(messages: list) -> str:
 def get_or_create_session(messages: list = None) -> str:
     """Get or create session bound to the current opencode chat.
     
-    Uses request fingerprinting: hashes the first user message to
-    create a stable session identity. This avoids the broken heuristic
-    of guessing which opencode session is active from the DB.
+    Uses request fingerprinting: hashes the first user message text
+    to create a stable session identity. Handles multimodal content
+    and ignores opencode's internal requests (title generation).
     """
     fingerprint = _fingerprint_messages(messages) if messages else ""
     
     if fingerprint:
-        # Check if we already have a session for this fingerprint
         session = session_manager.get_or_create_session_by_opencode_id(
             fingerprint,
             directory=None,
@@ -251,7 +286,7 @@ def capture_content(messages: list[ChatMessage], session_id: str):
     for msg in new_messages:
         if msg.role == "tool" and msg.content:
             tool_name = msg.name or tool_id_to_name.get(msg.tool_call_id or "", "") or "external_tool"
-            content = msg.content if isinstance(msg.content, str) else str(msg.content)
+            content = _extract_text(msg.content)
             if content.strip() and len(content) >= RLM_CAPTURE_MIN_CHARS:
                 session_manager.append(
                     session_id, 
@@ -262,7 +297,7 @@ def capture_content(messages: list[ChatMessage], session_id: str):
                 captured += 1
         
         elif msg.role == "assistant" and msg.content:
-            content = msg.content if isinstance(msg.content, str) else str(msg.content)
+            content = _extract_text(msg.content)
             if not msg.tool_calls and len(content) > RLM_ASSISTANT_MIN_CHARS:
                 session_manager.append(
                     session_id,
@@ -273,8 +308,11 @@ def capture_content(messages: list[ChatMessage], session_id: str):
                 captured += 1
         
         elif msg.role == "user" and msg.content:
-            content = msg.content if isinstance(msg.content, str) else str(msg.content)
-            if content.strip() and len(content) >= RLM_USER_MIN_CHARS:  # Always capture user messages by default (threshold=0)
+            content = _extract_text(msg.content)
+            # Skip title-generation requests
+            if content.lower().startswith(_TITLE_PREFIXES):
+                continue
+            if content.strip() and len(content) >= RLM_USER_MIN_CHARS:
                 session_manager.append(
                     session_id,
                     "user_message",
