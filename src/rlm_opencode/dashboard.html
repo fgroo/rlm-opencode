@@ -40,10 +40,39 @@
 			left: -50%;
 			width: 200vw;
 			height: 200vh;
-			background: radial-gradient(circle at 50% 50%, rgba(179, 0, 255, 0.05) 0%, rgba(0, 240, 255, 0.02) 20%, transparent 50%);
+			background:
+				radial-gradient(circle at 35% 45%, rgba(179, 0, 255, 0.08) 0%, transparent 40%),
+				radial-gradient(circle at 65% 55%, rgba(0, 240, 255, 0.08) 0%, transparent 40%),
+				radial-gradient(circle at 50% 50%, rgba(255, 0, 127, 0.05) 0%, transparent 50%);
 			animation: rotateGlow 60s linear infinite;
 			z-index: -1;
 			pointer-events: none;
+		}
+
+		.milkyway::before,
+		.milkyway::after {
+			content: '';
+			position: absolute;
+			border-radius: 50%;
+			filter: blur(60px);
+			animation: floatPearl 20s infinite ease-in-out alternate;
+		}
+
+		.milkyway::before {
+			top: 30%;
+			left: 30%;
+			width: 400px;
+			height: 400px;
+			background: radial-gradient(circle, rgba(255, 255, 255, 0.15) 0%, rgba(0, 240, 255, 0.05) 50%, transparent 100%);
+		}
+
+		.milkyway::after {
+			bottom: 30%;
+			right: 30%;
+			width: 500px;
+			height: 500px;
+			background: radial-gradient(circle, rgba(255, 255, 255, 0.1) 0%, rgba(179, 0, 255, 0.08) 50%, transparent 100%);
+			animation-delay: -10s;
 		}
 
 		@keyframes rotateGlow {
@@ -53,6 +82,16 @@
 
 			100% {
 				transform: rotate(360deg);
+			}
+		}
+
+		@keyframes floatPearl {
+			0% {
+				transform: translate(0, 0) scale(1);
+			}
+
+			100% {
+				transform: translate(150px, -100px) scale(1.2);
 			}
 		}
 
@@ -146,8 +185,8 @@
 		}
 
 		.metric-card {
-			background: rgba(10, 10, 15, 0.8);
-			border: 1px solid rgba(0, 240, 255, 0.2);
+			background: transparent;
+			border: 1px solid rgba(0, 240, 255, 0.1);
 			padding: 25px;
 			position: relative;
 			z-index: 1;
@@ -156,23 +195,27 @@
 		.metric-card::before {
 			content: '';
 			position: absolute;
-			top: 0;
-			left: 0;
-			width: 10px;
-			height: 10px;
-			border-top: 2px solid var(--neon-blue);
-			border-left: 2px solid var(--neon-blue);
+			top: -2px;
+			left: -2px;
+			width: 25px;
+			height: 25px;
+			border-top: 3px solid var(--neon-blue);
+			border-left: 3px solid var(--neon-blue);
+			box-shadow: -2px -2px 10px rgba(0, 240, 255, 0.5);
+			pointer-events: none;
 		}
 
 		.metric-card::after {
 			content: '';
 			position: absolute;
-			bottom: 0;
-			right: 0;
-			width: 10px;
-			height: 10px;
-			border-bottom: 2px solid var(--neon-purple);
-			border-right: 2px solid var(--neon-purple);
+			bottom: -2px;
+			right: -2px;
+			width: 25px;
+			height: 25px;
+			border-bottom: 3px solid var(--neon-purple);
+			border-right: 3px solid var(--neon-purple);
+			box-shadow: 2px 2px 10px rgba(179, 0, 255, 0.5);
+			pointer-events: none;
 		}
 
 		.metric-title {
@@ -231,14 +274,6 @@
 		.chiller svg {
 			width: 100%;
 			height: 100%;
-			filter: drop-shadow(0 0 5px var(--neon-blue));
-		}
-
-		.chiller path.glow-line {
-			stroke: var(--neon-blue);
-			fill: none;
-			stroke-width: 2;
-			stroke-linecap: round;
 		}
 
 		@keyframes chillBop {
@@ -255,10 +290,23 @@
 
 		/* Logs Section */
 		.logs-section {
-			background: rgba(10, 10, 15, 0.8);
-			border: 1px solid rgba(179, 0, 255, 0.2);
+			background: transparent;
+			border: 1px solid rgba(179, 0, 255, 0.1);
 			border-left: 4px solid var(--neon-purple);
 			position: relative;
+		}
+
+		.logs-section::after {
+			content: '';
+			position: absolute;
+			top: -2px;
+			right: -2px;
+			width: 30px;
+			height: 30px;
+			border-top: 3px solid var(--neon-purple);
+			border-right: 3px solid var(--neon-purple);
+			box-shadow: 2px -2px 10px rgba(179, 0, 255, 0.5);
+			pointer-events: none;
 		}
 
 		.logs-header {
@@ -428,9 +476,10 @@
 			<div class="metric-card">
 				<div class="chiller">
 					<svg viewBox="0 0 100 100">
-						<!-- Abstract sitting figure made of neon lines -->
-						<path class="glow-line"
-							d="M30,80 L50,80 L50,40 M50,60 L70,80 M40,25 A10,10 0 1,0 60,25 A10,10 0 1,0 40,25" />
+						<!-- Playful blob/bean -->
+						<path
+							d="M 25 50 C 10 30 30 10 50 20 C 70 10 90 30 75 50 C 90 70 70 90 50 80 C 30 90 10 70 25 50 Z"
+							fill="var(--neon-blue)" opacity="0.9" filter="drop-shadow(0 0 8px var(--neon-blue))" />
 					</svg>
 				</div>
 				<div class="metric-title">Context Volume</div>
@@ -440,9 +489,10 @@
 			<div class="metric-card">
 				<div class="chiller" style="animation-delay: 0.5s;">
 					<svg viewBox="0 0 100 100">
-						<path class="glow-line" style="stroke: var(--neon-purple);"
-							d="M20,60 Q50,90 80,60 M50,30 L50,60" />
-						<circle cx="50" cy="20" r="10" class="glow-line" style="stroke: var(--neon-purple);" />
+						<!-- Squarcle / Arch shape -->
+						<path
+							d="M 20 40 C 20 20 40 20 50 20 C 60 20 80 20 80 40 L 80 70 C 80 80 70 80 60 80 L 40 80 C 30 80 20 80 20 70 Z"
+							fill="var(--neon-purple)" opacity="0.9" filter="drop-shadow(0 0 8px var(--neon-purple))" />
 					</svg>
 				</div>
 				<div class="metric-title">Tool Calls</div>
@@ -452,9 +502,10 @@
 			<div class="metric-card">
 				<div class="chiller" style="animation-delay: 1s;">
 					<svg viewBox="0 0 100 100">
-						<path class="glow-line" style="stroke: var(--neon-pink);"
-							d="M30,70 L40,40 L60,40 L70,70 M30,55 L70,55" />
-						<circle cx="50" cy="25" r="10" class="glow-line" style="stroke: var(--neon-pink);" />
+						<!-- Playful Star/Flower -->
+						<path
+							d="M 50 15 C 55 15 60 30 70 30 C 80 30 85 40 80 50 C 85 60 80 70 70 70 C 60 70 55 85 50 85 C 45 85 40 70 30 70 C 20 70 15 60 20 50 C 15 40 20 30 30 30 C 40 30 45 15 50 15 Z"
+							fill="var(--neon-pink)" opacity="0.9" filter="drop-shadow(0 0 8px var(--neon-pink))" />
 					</svg>
 				</div>
 				<div class="metric-title">Active Iteration</div>
