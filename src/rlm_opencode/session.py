@@ -584,6 +584,56 @@ class SessionManager:
             
         console.print(f"[green]Successfully imported {len(chunks)} entries to new session [cyan]{session.id}[/cyan][/green]")
         return session
+
+    def branch_session(self, source_session_id: str, drop_last_n: int = 0) -> Session:
+        """Create a new session from an existing one, optionally dropping recent entries.
+        
+        This mimics Git branching for agent memory. If the agent goes down a bad path,
+        the user can branch the session from 10 turns ago and attach the new UI to it.
+        """
+        source = self.get_session(source_session_id)
+        if not source:
+            raise ValueError(f"Source session {source_session_id} not found")
+            
+        if source.incognito:
+            raise ValueError("Cannot branch an incognito session")
+            
+        source_path = CONTEXTS_DIR / source.context_file
+        if not source_path.exists():
+            raise FileNotFoundError(f"Source context file not found: {source_path}")
+            
+        content = source_path.read_text(errors="replace")
+        chunks = content.split("---ENTRY_SEPARATOR---\n")
+        
+        # Remove empty trailing chunk if present
+        if chunks and not chunks[-1].strip():
+            chunks.pop()
+            
+        # Drop recent entries
+        if drop_last_n > 0:
+            if drop_last_n >= len(chunks):
+                raise ValueError(f"Cannot drop {drop_last_n} entries (session only has {len(chunks)})")
+            chunks = chunks[:-drop_last_n]
+            
+        # Create new branch
+        session = self.create_session()
+        from rich.progress import track
+        
+        for chunk in track(chunks, description=f"Branching session...", transient=True):
+            if not chunk.strip():
+                continue
+                
+            entry_type = "user_message"
+            if chunk.startswith("[Tool:"):
+                entry_type = "tool_result"
+            elif chunk.startswith("[Thinking]"):
+                entry_type = "thinking"
+            elif chunk.startswith("\n====================="):
+                entry_type = "memory_redaction"
+                
+            self.append(session.id, entry_type, chunk)
+            
+        return session
     
     def delete_session(self, session_id: str) -> bool:
         """Delete a session."""

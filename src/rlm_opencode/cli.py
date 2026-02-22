@@ -327,9 +327,36 @@ def import_ctx(
         session = session_manager.import_context_file(file_path)
         console.print(f"\n[bold green]Import Complete![/bold green]")
         console.print(f"You can now link your active OpenCode chat to this imported session:")
-        console.print(f"  [cyan]rlm-opencode join <your_active_chat_id> {session.id}[/cyan]")
     except Exception as e:
         console.print(f"[red]Error importing context:[/red] {e}")
+
+
+@app.command()
+def branch(
+    source_session_id: str = typer.Argument(..., help="The origin session ID to branch from"),
+    drop_last: int = typer.Option(0, "--drop-last", "-d", help="Number of recent context entries to permanently drop in the new branch"),
+):
+    """Clone an existing session, optionally dropping recent mistakes from memory.
+    
+    This is like Git for Agent Memory. If the agent goes down a huge rabbit hole
+    of failed debugging, you can branch the session from 10 turns ago, leaving
+    the garbage behind, and attach your active OpenCode chat to the clean branch.
+    """
+    from rlm_opencode.session import session_manager
+    
+    try:
+        new_session = session_manager.branch_session(source_session_id, drop_last)
+        console.print(f"\n[bold green]Branch Created Successfully![/bold green]")
+        console.print(f"Origin: [dim]{source_session_id}[/dim]")
+        if drop_last > 0:
+            console.print(f"Dropped: [red]last {drop_last} entries[/red]")
+            
+        console.print(f"\n🚀 New Clean Branch: [cyan]{new_session.id}[/cyan]")
+        console.print(f"To use this branch in your active OpenCode window, run:")
+        console.print(f"  [cyan]rlm-opencode join <your_active_chat_id> {new_session.id}[/cyan]")
+        
+    except Exception as e:
+        console.print(f"[red]Error branching session:[/red] {str(e)}")
 
 
 @app.command()
