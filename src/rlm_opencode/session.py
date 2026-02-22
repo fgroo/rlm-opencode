@@ -30,6 +30,7 @@ RLM_DATA_DIR = Path.home() / ".local" / "share" / "rlm-opencode"
 SESSIONS_DB = RLM_DATA_DIR / "sessions.db"
 CONTEXTS_DIR = RLM_DATA_DIR / "contexts"
 MAPPINGS_DIR = RLM_DATA_DIR / "mappings"
+CONFIG_FILE = RLM_DATA_DIR / "config.json"
 
 
 @dataclass
@@ -145,6 +146,29 @@ class SessionManager:
         RLM_DATA_DIR.mkdir(parents=True, exist_ok=True)
         CONTEXTS_DIR.mkdir(parents=True, exist_ok=True)
         MAPPINGS_DIR.mkdir(parents=True, exist_ok=True)
+        
+        # Ensure default config exists
+        if not CONFIG_FILE.exists():
+            self._save_config({"strict_mode_level": 0})
+            
+    def _save_config(self, config_data: dict):
+        """Save global configuration to disk."""
+        CONFIG_FILE.write_text(json.dumps(config_data, indent=2))
+        
+    def get_config(self) -> dict:
+        """Get global configuration."""
+        if not CONFIG_FILE.exists():
+            return {"strict_mode_level": 0}
+        try:
+            return json.loads(CONFIG_FILE.read_text())
+        except Exception:
+            return {"strict_mode_level": 0}
+            
+    def set_strict_mode(self, level: int):
+        """Update the strict mode level (0-4)."""
+        config = self.get_config()
+        config["strict_mode_level"] = max(0, min(4, level))
+        self._save_config(config)
     
     def _init_db(self):
         """Initialize SQLite database."""

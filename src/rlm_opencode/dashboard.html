@@ -143,21 +143,63 @@
 		.strict-badge {
 			display: none;
 			padding: 4px 8px;
-			background: rgba(255, 0, 127, 0.1);
-			border: 1px solid var(--neon-pink);
-			color: var(--neon-pink);
 			font-family: 'JetBrains Mono', monospace;
 			font-size: 0.75rem;
 			font-weight: bold;
 			border-radius: 4px;
-			text-shadow: 0 0 5px rgba(255, 0, 127, 0.8);
-			box-shadow: 0 0 10px rgba(255, 0, 127, 0.2);
 			letter-spacing: 1px;
-			animation: pulsePink 2s infinite;
 		}
 
 		.strict-badge.active {
 			display: inline-block;
+		}
+
+		.strict-badge.level-1 {
+			background: rgba(0, 240, 255, 0.1);
+			border: 1px solid var(--neon-blue);
+			color: var(--neon-blue);
+			text-shadow: 0 0 5px rgba(0, 240, 255, 0.8);
+			box-shadow: 0 0 10px rgba(0, 240, 255, 0.2);
+		}
+
+		.strict-badge.level-2 {
+			background: rgba(180, 0, 255, 0.1);
+			border: 1px solid var(--neon-purple);
+			color: var(--neon-purple);
+			text-shadow: 0 0 5px rgba(180, 0, 255, 0.8);
+			box-shadow: 0 0 10px rgba(180, 0, 255, 0.2);
+		}
+
+		.strict-badge.level-3 {
+			background: rgba(255, 0, 127, 0.1);
+			border: 1px solid var(--neon-pink);
+			color: var(--neon-pink);
+			text-shadow: 0 0 5px rgba(255, 0, 127, 0.8);
+			box-shadow: 0 0 10px rgba(255, 0, 127, 0.2);
+		}
+
+		.strict-badge.level-4 {
+			background: rgba(255, 0, 0, 0.15);
+			border: 1px solid #ff0000;
+			color: #ff0000;
+			text-shadow: 0 0 8px rgba(255, 0, 0, 0.9);
+			box-shadow: 0 0 15px rgba(255, 0, 0, 0.4);
+			animation: pulseRed 0.8s infinite;
+		}
+
+		@keyframes pulseRed {
+			0% {
+				box-shadow: 0 0 10px rgba(255, 0, 0, 0.2);
+			}
+
+			50% {
+				box-shadow: 0 0 25px rgba(255, 0, 0, 0.8);
+				background: rgba(255, 0, 0, 0.3);
+			}
+
+			100% {
+				box-shadow: 0 0 10px rgba(255, 0, 0, 0.2);
+			}
 		}
 
 		@keyframes pulsePink {
@@ -581,9 +623,11 @@
 		const strictBadge = document.getElementById('strict-badge');
 
 		// Check strict mode template injection
-		const isStrictMode = "___STRICT_MODE_TEMPLATE___" === "true";
-		if (isStrictMode) {
+		const strictLevel = parseInt("___STRICT_MODE_TEMPLATE___", 10) || 0;
+		if (strictLevel > 0) {
 			strictBadge.classList.add('active');
+			strictBadge.classList.add(`level-${strictLevel}`);
+			strictBadge.innerText = `STRICT LVL ${strictLevel}`;
 		}
 
 		let eventCount = 0;

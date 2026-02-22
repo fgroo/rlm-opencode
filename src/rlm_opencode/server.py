@@ -92,7 +92,6 @@ RLM_ASSISTANT_MIN_CHARS = int(os.environ.get("RLM_ASSISTANT_MIN_CHARS", "50")) #
 UPSTREAM_MAX_TOKENS = int(os.environ.get("RLM_UPSTREAM_MAX_TOKENS", "128000")) # Upstream model's real context window
 TOKEN_RESERVE = int(os.environ.get("RLM_TOKEN_RESERVE", "16000"))              # Reserve for response + tools
 RLM_SUMMARIZE_MODEL = os.environ.get("RLM_SUMMARIZE_MODEL")                    # Optional override for summarize model
-RLM_STRICT_MODE = os.environ.get("RLM_STRICT_MODE", "").lower() in ("1", "true", "yes")
 
 def estimate_tokens(text: str) -> int:
     """Rough token estimate: ~4 chars per token."""
@@ -358,13 +357,29 @@ Instead of seeing the full context, you have TOOLS to access it on-demand:
 Remember: You DON'T need to read the entire context. Summarize large chunks or search first, then read relevant sections.
 """
 
-    if RLM_STRICT_MODE:
-        prompt += """
-🚨 STRICT RLM MODE ENABLED 🚨
+    strict_level = session_manager.get_config().get("strict_mode_level", 0)
+    
+    if strict_level >= 1:
+        prompt += "\n## Strict Mode Guidance\n"
+        
+        if strict_level == 1:
+            prompt += "Note: Your visible conversation history has been truncated. Use your tools if you need older info.\n"
+        elif strict_level == 2:
+            prompt += "Do not guess past information. Use your tools to search the context lake.\n"
+        elif strict_level == 3:
+            prompt += """🚨 STRICT MODE 🚨
 Your visible conversation history has been heavily truncated. Older messages were deliberately deleted.
 If the user references ANY past code, decision, or file that is not in your immediate visible messages, you MUST use `rlm_summarize`, `rlm_search`, or `rlm_get_context` to find it.
 DO NOT GUESS. DO NOT SAY YOU DON'T KNOW. USE YOUR TOOLS FIRST.
 """
+        elif strict_level >= 4:
+            prompt += """🚨 MAXIMUM STRICTNESS 🚨 
+When you are over 128k tokens, YOU SUFFER FROM MASSIVE AMNESIA. 
+Your visible messages are ONLY the last few turns. The vast majority of the project is hidden from you.
+You absolutely MUST use `rlm_summarize` and `rlm_search` repeatedly to understand the history, verify past tasks, and rebuild connections. 
+DO NOT TRUST YOUR PRE-TRAINING OR MEMORY. USE THE TOOLS.
+"""
+
     return prompt
 
 
@@ -434,7 +449,8 @@ async def root():
     dashboard_path = Path(__file__).parent / "dashboard.html"
     if dashboard_path.exists():
         content = dashboard_path.read_text()
-        content = content.replace("___STRICT_MODE_TEMPLATE___", "true" if RLM_STRICT_MODE else "false")
+        strict_level = session_manager.get_config().get("strict_mode_level", 0)
+        content = content.replace("___STRICT_MODE_TEMPLATE___", str(strict_level))
         return HTMLResponse(content=content, status_code=200)
     return HTMLResponse(content="Dashboard not found", status_code=404)
 

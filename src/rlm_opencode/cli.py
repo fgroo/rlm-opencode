@@ -206,6 +206,43 @@ def status():
 
 
 @app.command()
+def strict(
+    level: int = typer.Argument(None, help="Strict mode level (0-4)"),
+):
+    """View or set the Strict Mode level (0 = Off, 4 = Maximum).
+    
+    Strict Mode forces the LLM to use tools instead of guessing when
+    history is truncated. Standard is 0.
+    """
+    from rlm_opencode.session import session_manager
+    
+    if level is None:
+        current = session_manager.get_config().get("strict_mode_level", 0)
+        console.print(f"Current Strict Mode level: [cyan]{current}[/cyan]")
+        console.print("[dim]Use 'rlm-opencode strict <0-4>' to change it.[/dim]")
+        return
+        
+    if not 0 <= level <= 4:
+        console.print("[red]Error:[/red] Strict mode level must be between 0 and 4.")
+        raise typer.Exit(1)
+        
+    session_manager.set_strict_mode(level)
+    
+    colors = {
+        0: "dim",
+        1: "blue",
+        2: "magenta",
+        3: "red",
+        4: "bold red blink"
+    }
+    style = colors[level]
+    
+    console.print(f"Strict Mode updated to: [{style}]Level {level}[/{style}]")
+    if level > 0:
+        console.print("The RLM server will now aggressively instruct the model to use context tools.")
+
+
+@app.command()
 def sessions():
     """List all RLM sessions with context stats."""
     from rlm_opencode.session import session_manager
