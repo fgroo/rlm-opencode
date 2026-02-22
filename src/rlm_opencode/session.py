@@ -15,6 +15,8 @@ import json
 import sqlite3
 import time
 import uuid
+import threading
+from collections import defaultdict
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -57,6 +59,7 @@ class Session:
     opencode_session_id: str | None = None
     directory: str | None = None
     incognito: bool = False
+    target_session_id: str | None = None
     entries: list[ContextEntry] = field(default_factory=list)
     stats: SessionStats = field(default_factory=SessionStats)
     context_file: str = ""
@@ -68,6 +71,7 @@ class Session:
             "opencode_session_id": self.opencode_session_id,
             "directory": self.directory,
             "incognito": self.incognito,
+            "target_session_id": self.target_session_id,
             "context_file": self.context_file,
             "stats": {
                 "files_read": self.stats.files_read,
@@ -111,6 +115,7 @@ class Session:
             opencode_session_id=data.get("opencode_session_id"),
             directory=data.get("directory"),
             incognito=data.get("incognito", False),
+            target_session_id=data.get("target_session_id"),
             context_file=data.get("context_file", ""),
             entries=entries,
             stats=stats,
@@ -131,6 +136,7 @@ class SessionManager:
         self.sessions: dict[str, Session] = {}
         self._incognito_sessions: set[str] = set()
         self._incognito_contexts: dict[str, str] = {}
+        self._locks = defaultdict(threading.Lock)
         self._ensure_dirs()
         self._init_db()
     
@@ -150,6 +156,7 @@ class SessionManager:
                     opencode_session_id TEXT,
                     directory TEXT,
                     incognito INTEGER DEFAULT 0,
+                    target_session_id TEXT,
                     context_file TEXT,
                     stats_json TEXT,
                     UNIQUE(opencode_session_id)
@@ -170,6 +177,13 @@ class SessionManager:
                 CREATE INDEX IF NOT EXISTS idx_sessions_directory ON sessions(directory);
                 CREATE INDEX IF NOT EXISTS idx_entries_session ON entries(session_id);
             """)
+            
+            # Migration to add target_session_id for existing DBs
+            try:
+                conn.execute("ALTER TABLE sessions ADD COLUMN target_session_id TEXT")
+            except sqlite3.OperationalError:
+                pass
+
     
     @contextmanager
     def _get_db(self) -> Iterator[sqlite3.Connection]:
@@ -223,8 +237,8 @@ class SessionManager:
         
         return session
     
-    def get_session(self, session_id: str) -> Session | None:
-        """Get a session by ID."""
+    def get_raw_session(self, session_id: str) -> Session | None:
+        """Get a session by ID without resolving its target."""
         if session_id in self.sessions:
             return self.sessions[session_id]
         
@@ -232,6 +246,37 @@ class SessionManager:
         if session:
             self.sessions[session_id] = session
         return session
+    
+    def get_session(self, session_id: str, resolve: bool = True) -> Session | None:
+        """Get a session by ID, optionally resolving target links."""
+        session = self.get_raw_session(session_id)
+        if not session or not resolve:
+            return session
+            
+        depth = 0
+        while session.target_session_id and depth < 5:
+            target = self.get_raw_session(session.target_session_id)
+            if not target:
+                break
+            session = target
+            depth += 1
+            
+        return session
+
+    def set_target_session(self, session_id: str, target_id: str | None) -> bool:
+        """Link a session to another session's context."""
+        session = self.get_raw_session(session_id)
+        if not session:
+            return False
+            
+        session.target_session_id = target_id
+        if not session.incognito:
+            with self._get_db() as conn:
+                conn.execute(
+                    "UPDATE sessions SET target_session_id = ? WHERE id = ?",
+                    (target_id, session_id)
+                )
+        return True
     
     def get_session_by_opencode(self, opencode_session_id: str) -> Session | None:
         """Get or create session synced with an opencode session."""
@@ -242,7 +287,9 @@ class SessionManager:
             ).fetchone()
             
             if row:
-                return self._row_to_session(row)
+                session = self._row_to_session(row)
+                self.sessions[session.id] = session
+                return self.get_session(session.id)
         
         return self.create_session(opencode_session_id=opencode_session_id)
     
@@ -252,7 +299,7 @@ class SessionManager:
         
         for session in self.sessions.values():
             if session.directory == dir_path:
-                return session
+                return self.get_session(session.id)
         
         with self._get_db() as conn:
             row = conn.execute(
@@ -263,7 +310,7 @@ class SessionManager:
             if row:
                 session = self._row_to_session(row)
                 self.sessions[session.id] = session
-                return session
+                return self.get_session(session.id)
         
         session = self.create_session(directory=dir_path, incognito=incognito)
         console.print(f"[green]Created session {session.id} for directory: {dir_path}[/green]")
@@ -278,7 +325,7 @@ class SessionManager:
         # Check in-memory cache first
         for session in self.sessions.values():
             if session.opencode_session_id == opencode_id:
-                return session
+                return self.get_session(session.id)
         
         # Check database
         with self._get_db() as conn:
@@ -290,7 +337,7 @@ class SessionManager:
             if row:
                 session = self._row_to_session(row)
                 self.sessions[session.id] = session
-                return session
+                return self.get_session(session.id)
         
         # Create new session bound to this opencode chat
         session = self.create_session(opencode_session_id=opencode_id, directory=directory)
@@ -299,7 +346,7 @@ class SessionManager:
     
     def set_incognito(self, session_id: str, incognito: bool):
         """Toggle incognito mode for a session."""
-        session = self.get_session(session_id)
+        session = self.get_raw_session(session_id)
         if not session:
             return
         
@@ -346,48 +393,49 @@ class SessionManager:
         if not session:
             raise ValueError(f"Session {session_id} not found")
         
-        if session.incognito:
-            current_size = sum(e.length for e in session.entries)
-        else:
-            context_path = CONTEXTS_DIR / session.context_file
-            current_size = context_path.stat().st_size if context_path.exists() else 0
-        
-        if session.incognito:
-            sep = "\n---ENTRY_SEPARATOR---\n"
-            content_with_sep = content + sep if not content.endswith("\n") else content + "---ENTRY_SEPARATOR---\n"
-            if session_id not in self._incognito_contexts:
-                self._incognito_contexts[session_id] = ""
-            self._incognito_contexts[session_id] += content_with_sep
-        else:
-            context_path = CONTEXTS_DIR / session.context_file
-            with open(context_path, "a") as f:
-                f.write(content)
-                if not content.endswith("\n"):
-                    f.write("\n")
-                f.write("---ENTRY_SEPARATOR---\n")
-        
-        entry = ContextEntry(
-            type=entry_type,
-            offset=current_size,
-            length=len(content),
-            timestamp=time.time(),
-            metadata=metadata or {},
-        )
-        
-        session.entries.append(entry)
-        
-        session.stats.total_chars += len(content)
-        if entry_type == "file_read":
-            session.stats.files_read += 1
-        elif entry_type == "tool_result":
-            session.stats.tool_outputs += 1
-        elif entry_type == "thinking":
-            session.stats.thinking_blocks += 1
-        
-        if not session.incognito:
-            self._save_session(session)
-        
-        return entry
+        with self._locks[session.id]:
+            if session.incognito:
+                current_size = sum(e.length for e in session.entries)
+            else:
+                context_path = CONTEXTS_DIR / session.context_file
+                current_size = context_path.stat().st_size if context_path.exists() else 0
+            
+            if session.incognito:
+                sep = "\n---ENTRY_SEPARATOR---\n"
+                content_with_sep = content + sep if not content.endswith("\n") else content + "---ENTRY_SEPARATOR---\n"
+                if session_id not in self._incognito_contexts:
+                    self._incognito_contexts[session_id] = ""
+                self._incognito_contexts[session_id] += content_with_sep
+            else:
+                context_path = CONTEXTS_DIR / session.context_file
+                with open(context_path, "a") as f:
+                    f.write(content)
+                    if not content.endswith("\n"):
+                        f.write("\n")
+                    f.write("---ENTRY_SEPARATOR---\n")
+            
+            entry = ContextEntry(
+                type=entry_type,
+                offset=current_size,
+                length=len(content),
+                timestamp=time.time(),
+                metadata=metadata or {},
+            )
+            
+            session.entries.append(entry)
+            
+            session.stats.total_chars += len(content)
+            if entry_type == "file_read":
+                session.stats.files_read += 1
+            elif entry_type == "tool_result":
+                session.stats.tool_outputs += 1
+            elif entry_type == "thinking":
+                session.stats.thinking_blocks += 1
+            
+            if not session.incognito:
+                self._save_session(session)
+            
+            return entry
     
     def get_context(self, session_id: str) -> str:
         """Get the full context for a session."""
@@ -421,7 +469,7 @@ class SessionManager:
     
     def delete_session(self, session_id: str) -> bool:
         """Delete a session."""
-        session = self.get_session(session_id)
+        session = self.get_raw_session(session_id)
         if not session:
             return False
         
@@ -458,7 +506,7 @@ class SessionManager:
     
     def sync_with_opencode(self, session_id: str, opencode_session_id: str):
         """Sync an existing session with an opencode session."""
-        session = self.get_session(session_id)
+        session = self.get_raw_session(session_id)
         if not session:
             return
         

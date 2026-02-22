@@ -238,12 +238,15 @@ def sessions():
         
         entry_count = len(session.entries) if session.entries else 0
         
-        # Context file path (shortened)
-        ctx_file = session.context_file
-        if ctx_file:
-            ctx_file = str(ctx_file).replace(str(Path.home()), "~")
+        # Context file path (shortened) or linked status
+        if session.target_session_id:
+            ctx_file = f"→ [cyan]{session.target_session_id}[/cyan]"
         else:
-            ctx_file = "—"
+            ctx_file = session.context_file
+            if ctx_file:
+                ctx_file = str(ctx_file).replace(str(Path.home()), "~")
+            else:
+                ctx_file = "—"
         
         table.add_row(
             session.id,
@@ -255,6 +258,39 @@ def sessions():
         )
     
     console.print(table)
+
+
+@app.command()
+def join(
+    target_session: str = typer.Argument(..., help="The ID of the master session with the context"),
+    session_to_redirect: str = typer.Argument(..., help="The ID of the session that will be redirected"),
+):
+    """Link a session to another session's context (Party Mode).
+    
+    Like dup2(), this redirects session_to_redirect's reads/writes to target_session.
+    Both agents will now share the exact same context!
+    """
+    from rlm_opencode.session import session_manager
+    
+    if session_manager.set_target_session(session_to_redirect, target_session):
+        console.print(f"[green]🎉 Party Mode Activated![/green]")
+        console.print(f"Session [cyan]{session_to_redirect}[/cyan] is now linked to [cyan]{target_session}[/cyan]")
+    else:
+        console.print(f"[red]Error:[/red] Could not find session {session_to_redirect}")
+
+
+@app.command()
+def unjoin(
+    session_id: str = typer.Argument(..., help="The ID of the session to un-link"),
+):
+    """Remove a session link, restoring its private context."""
+    from rlm_opencode.session import session_manager
+    
+    if session_manager.set_target_session(session_id, None):
+        console.print(f"[yellow]Link removed.[/yellow]")
+        console.print(f"Session [cyan]{session_id}[/cyan] now has its own private context again.")
+    else:
+        console.print(f"[red]Error:[/red] Could not find session {session_id}")
 
 
 @app.command()
