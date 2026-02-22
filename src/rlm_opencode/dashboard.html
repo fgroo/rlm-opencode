@@ -1,0 +1,594 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>RLM-OpenCode Live</title>
+	<link
+		href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&family=JetBrains+Mono:wght@400;700&display=swap"
+		rel="stylesheet">
+	<style>
+		:root {
+			--bg-dark: #09090b;
+			--neon-blue: #00f0ff;
+			--neon-purple: #b300ff;
+			--neon-pink: #ff007f;
+			--text-main: #f8fafc;
+			--text-dim: #94a3b8;
+			--grid-color: rgba(0, 240, 255, 0.05);
+		}
+
+		body {
+			margin: 0;
+			padding: 0;
+			background-color: var(--bg-dark);
+			color: var(--text-main);
+			font-family: 'Outfit', sans-serif;
+			overflow-x: hidden;
+			background-image:
+				linear-gradient(var(--grid-color) 1px, transparent 1px),
+				linear-gradient(90deg, var(--grid-color) 1px, transparent 1px);
+			background-size: 50px 50px;
+			background-position: center;
+		}
+
+		/* Ambient Milkyway Glow */
+		.milkyway {
+			position: fixed;
+			top: -50%;
+			left: -50%;
+			width: 200vw;
+			height: 200vh;
+			background: radial-gradient(circle at 50% 50%, rgba(179, 0, 255, 0.05) 0%, rgba(0, 240, 255, 0.02) 20%, transparent 50%);
+			animation: rotateGlow 60s linear infinite;
+			z-index: -1;
+			pointer-events: none;
+		}
+
+		@keyframes rotateGlow {
+			0% {
+				transform: rotate(0deg);
+			}
+
+			100% {
+				transform: rotate(360deg);
+			}
+		}
+
+		.container {
+			max-width: 1400px;
+			margin: 0 auto;
+			padding: 40px 20px;
+		}
+
+		header {
+			display: flex;
+			justify-content: space-between;
+			align-items: center;
+			margin-bottom: 50px;
+			border-bottom: 1px solid rgba(0, 240, 255, 0.2);
+			padding-bottom: 20px;
+		}
+
+		.title {
+			font-size: 2.5rem;
+			font-weight: 800;
+			letter-spacing: -1px;
+			text-transform: uppercase;
+			position: relative;
+			display: inline-block;
+		}
+
+		.title::after {
+			content: '';
+			position: absolute;
+			bottom: -5px;
+			left: 0;
+			width: 100%;
+			height: 2px;
+			background: linear-gradient(90deg, var(--neon-blue), var(--neon-purple));
+			box-shadow: 0 0 10px var(--neon-blue);
+		}
+
+		.status {
+			display: flex;
+			align-items: center;
+			gap: 12px;
+			font-family: 'JetBrains Mono', monospace;
+			font-size: 0.9rem;
+			color: var(--neon-blue);
+			text-shadow: 0 0 5px rgba(0, 240, 255, 0.5);
+		}
+
+		.status-dot {
+			width: 12px;
+			height: 12px;
+			background-color: var(--neon-blue);
+			border-radius: 50%;
+			box-shadow: 0 0 10px var(--neon-blue), 0 0 20px var(--neon-blue);
+			animation: pulse 2s infinite;
+		}
+
+		.status.offline .status-dot {
+			background-color: var(--neon-pink);
+			box-shadow: 0 0 10px var(--neon-pink), 0 0 20px var(--neon-pink);
+		}
+
+		.status.offline {
+			color: var(--neon-pink);
+			text-shadow: 0 0 5px rgba(255, 0, 127, 0.5);
+		}
+
+		@keyframes pulse {
+			0% {
+				transform: scale(1);
+				opacity: 1;
+			}
+
+			50% {
+				transform: scale(1.2);
+				opacity: 0.7;
+			}
+
+			100% {
+				transform: scale(1);
+				opacity: 1;
+			}
+		}
+
+		/* Metrics Row */
+		.metrics-grid {
+			display: grid;
+			grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+			gap: 30px;
+			margin-bottom: 50px;
+		}
+
+		.metric-card {
+			background: rgba(10, 10, 15, 0.8);
+			border: 1px solid rgba(0, 240, 255, 0.2);
+			padding: 25px;
+			position: relative;
+			z-index: 1;
+		}
+
+		.metric-card::before {
+			content: '';
+			position: absolute;
+			top: 0;
+			left: 0;
+			width: 10px;
+			height: 10px;
+			border-top: 2px solid var(--neon-blue);
+			border-left: 2px solid var(--neon-blue);
+		}
+
+		.metric-card::after {
+			content: '';
+			position: absolute;
+			bottom: 0;
+			right: 0;
+			width: 10px;
+			height: 10px;
+			border-bottom: 2px solid var(--neon-purple);
+			border-right: 2px solid var(--neon-purple);
+		}
+
+		.metric-title {
+			font-family: 'JetBrains Mono', monospace;
+			font-size: 0.8rem;
+			color: var(--text-dim);
+			text-transform: uppercase;
+			letter-spacing: 1px;
+			margin-bottom: 10px;
+		}
+
+		.metric-value {
+			font-size: 3rem;
+			font-weight: 800;
+			line-height: 1;
+			background: linear-gradient(135deg, #fff, var(--neon-blue));
+			-webkit-background-clip: text;
+			background-clip: text;
+			-webkit-text-fill-color: transparent;
+			text-shadow: 0 0 20px rgba(0, 240, 255, 0.2);
+			transition: all 0.3s;
+		}
+
+		.metric-value.bump {
+			animation: valueBump 0.3s ease-out;
+		}
+
+		@keyframes valueBump {
+			0% {
+				transform: scale(1);
+			}
+
+			50% {
+				transform: scale(1.1) translateY(-5px);
+				color: var(--neon-purple);
+				-webkit-text-fill-color: var(--neon-purple);
+				text-shadow: 0 0 20px var(--neon-purple);
+			}
+
+			100% {
+				transform: scale(1);
+			}
+		}
+
+		/* Chilling SVG Figures */
+		.chiller {
+			position: absolute;
+			top: -35px;
+			right: 20px;
+			width: 40px;
+			height: 40px;
+			animation: chillBop 3s infinite ease-in-out;
+			z-index: 2;
+		}
+
+		.chiller svg {
+			width: 100%;
+			height: 100%;
+			filter: drop-shadow(0 0 5px var(--neon-blue));
+		}
+
+		.chiller path.glow-line {
+			stroke: var(--neon-blue);
+			fill: none;
+			stroke-width: 2;
+			stroke-linecap: round;
+		}
+
+		@keyframes chillBop {
+
+			0%,
+			100% {
+				transform: translateY(0) rotate(-5deg);
+			}
+
+			50% {
+				transform: translateY(-5px) rotate(5deg);
+			}
+		}
+
+		/* Logs Section */
+		.logs-section {
+			background: rgba(10, 10, 15, 0.8);
+			border: 1px solid rgba(179, 0, 255, 0.2);
+			border-left: 4px solid var(--neon-purple);
+			position: relative;
+		}
+
+		.logs-header {
+			padding: 15px 25px;
+			border-bottom: 1px dashed rgba(179, 0, 255, 0.2);
+			font-family: 'JetBrains Mono', monospace;
+			font-size: 0.9rem;
+			color: var(--neon-purple);
+			display: flex;
+			justify-content: space-between;
+		}
+
+		.logs-container {
+			height: 400px;
+			overflow-y: auto;
+			padding: 20px;
+			font-family: 'JetBrains Mono', monospace;
+			font-size: 0.85rem;
+			scroll-behavior: smooth;
+		}
+
+		.logs-container::-webkit-scrollbar {
+			width: 8px;
+		}
+
+		.logs-container::-webkit-scrollbar-track {
+			background: rgba(0, 0, 0, 0.5);
+		}
+
+		.logs-container::-webkit-scrollbar-thumb {
+			background: rgba(179, 0, 255, 0.5);
+		}
+
+		.log-entry {
+			margin-bottom: 12px;
+			line-height: 1.4;
+			opacity: 0;
+			animation: slideIn 0.3s forwards;
+			padding-left: 15px;
+			border-left: 2px solid transparent;
+		}
+
+		@keyframes slideIn {
+			from {
+				opacity: 0;
+				transform: translateX(-10px);
+			}
+
+			to {
+				opacity: 1;
+				transform: translateX(0);
+			}
+		}
+
+		.log-time {
+			color: var(--text-dim);
+			margin-right: 15px;
+			font-size: 0.75rem;
+		}
+
+		.log-type-stream {
+			color: var(--neon-blue);
+			border-left-color: var(--neon-blue);
+		}
+
+		.log-type-tool {
+			color: var(--neon-purple);
+			border-left-color: var(--neon-purple);
+		}
+
+		.log-type-system {
+			color: #facc15;
+			border-left-color: #facc15;
+		}
+
+		.log-type-error {
+			color: var(--neon-pink);
+			border-left-color: var(--neon-pink);
+		}
+
+		.log-highlight {
+			color: #fff;
+			text-shadow: 0 0 5px rgba(255, 255, 255, 0.5);
+		}
+
+		/* Active Pipeline Indicator */
+		.pipeline {
+			margin-top: 50px;
+			display: flex;
+			align-items: center;
+			justify-content: center;
+			gap: 20px;
+		}
+
+		.pipe-node {
+			padding: 10px 20px;
+			border: 1px solid var(--text-dim);
+			border-radius: 4px;
+			font-family: 'JetBrains Mono', monospace;
+			font-size: 0.8rem;
+			color: var(--text-dim);
+			transition: all 0.3s;
+		}
+
+		.pipe-line {
+			width: 50px;
+			height: 2px;
+			background: var(--text-dim);
+			position: relative;
+		}
+
+		.pipeline.active .pipe-node {
+			border-color: var(--neon-blue);
+			color: var(--neon-blue);
+			box-shadow: 0 0 10px rgba(0, 240, 255, 0.2) inset;
+		}
+
+		.pipeline.active .pipe-line {
+			background: var(--neon-blue);
+		}
+
+		.pipeline.active .pipe-line::after {
+			content: '';
+			position: absolute;
+			top: -2px;
+			left: 0;
+			width: 10px;
+			height: 6px;
+			background: #fff;
+			box-shadow: 0 0 10px #fff, 0 0 20px var(--neon-blue);
+			animation: travel 1s infinite linear;
+		}
+
+		@keyframes travel {
+			0% {
+				left: 0;
+				opacity: 1;
+			}
+
+			90% {
+				left: 40px;
+				opacity: 1;
+			}
+
+			100% {
+				left: 50px;
+				opacity: 0;
+			}
+		}
+	</style>
+</head>
+
+<body>
+
+	<div class="milkyway"></div>
+
+	<div class="container">
+		<header>
+			<div class="title">RLM-OpenCode Live</div>
+			<div class="status" id="connection-status">
+				<div class="status-dot"></div>
+				<span id="status-text">CONNECTING...</span>
+			</div>
+		</header>
+
+		<div class="metrics-grid">
+			<div class="metric-card">
+				<div class="chiller">
+					<svg viewBox="0 0 100 100">
+						<!-- Abstract sitting figure made of neon lines -->
+						<path class="glow-line"
+							d="M30,80 L50,80 L50,40 M50,60 L70,80 M40,25 A10,10 0 1,0 60,25 A10,10 0 1,0 40,25" />
+					</svg>
+				</div>
+				<div class="metric-title">Context Volume</div>
+				<div class="metric-value" id="metric-context">0</div>
+			</div>
+
+			<div class="metric-card">
+				<div class="chiller" style="animation-delay: 0.5s;">
+					<svg viewBox="0 0 100 100">
+						<path class="glow-line" style="stroke: var(--neon-purple);"
+							d="M20,60 Q50,90 80,60 M50,30 L50,60" />
+						<circle cx="50" cy="20" r="10" class="glow-line" style="stroke: var(--neon-purple);" />
+					</svg>
+				</div>
+				<div class="metric-title">Tool Calls</div>
+				<div class="metric-value" id="metric-tools">0</div>
+			</div>
+
+			<div class="metric-card">
+				<div class="chiller" style="animation-delay: 1s;">
+					<svg viewBox="0 0 100 100">
+						<path class="glow-line" style="stroke: var(--neon-pink);"
+							d="M30,70 L40,40 L60,40 L70,70 M30,55 L70,55" />
+						<circle cx="50" cy="25" r="10" class="glow-line" style="stroke: var(--neon-pink);" />
+					</svg>
+				</div>
+				<div class="metric-title">Active Iteration</div>
+				<div class="metric-value" id="metric-iter">0</div>
+			</div>
+		</div>
+
+		<div class="pipeline" id="pipeline-indicator">
+			<div class="pipe-node">OpenCode</div>
+			<div class="pipe-line"></div>
+			<div class="pipe-node">RLM Proxy</div>
+			<div class="pipe-line"></div>
+			<div class="pipe-node">Upstream LLM</div>
+		</div>
+
+		<div class="logs-section" style="margin-top: 40px;">
+			<div class="logs-header">
+				<span>> SERVER_TELEMETRY_STREAM</span>
+				<span id="log-count">0 EVENTS</span>
+			</div>
+			<div class="logs-container" id="logs-container">
+				<!-- Logs injected here -->
+			</div>
+		</div>
+	</div>
+
+	<script>
+		const logsContainer = document.getElementById('logs-container');
+		const metricContext = document.getElementById('metric-context');
+		const metricTools = document.getElementById('metric-tools');
+		const metricIter = document.getElementById('metric-iter');
+		const statusEl = document.getElementById('connection-status');
+		const statusText = document.getElementById('status-text');
+		const pipeline = document.getElementById('pipeline-indicator');
+		const logCount = document.getElementById('log-count');
+
+		let eventCount = 0;
+		let totalTools = 0;
+
+		function formatNumber(num) {
+			if (num > 1000000) return (num / 1000000).toFixed(2) + 'M';
+			if (num > 1000) return (num / 1000).toFixed(1) + 'K';
+			return num;
+		}
+
+		function updateMetric(el, value) {
+			if (el.innerText !== value.toString() && el.innerText !== formatNumber(value)) {
+				el.innerText = formatNumber(value);
+				el.classList.remove('bump');
+				void el.offsetWidth; // trigger reflow
+				el.classList.add('bump');
+			}
+		}
+
+		function appendLog(type, message) {
+			const entry = document.createElement('div');
+			entry.className = `log-entry log-type-${type}`;
+
+			const time = new Date().toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit', fractionalSecondDigits: 3 });
+
+			entry.innerHTML = `<span class="log-time">[${time}]</span> ${message}`;
+			logsContainer.appendChild(entry);
+
+			// Auto scroll
+			logsContainer.scrollTop = logsContainer.scrollHeight;
+
+			// Cleanup old logs
+			if (logsContainer.children.length > 100) {
+				logsContainer.removeChild(logsContainer.firstChild);
+			}
+
+			eventCount++;
+			logCount.innerText = `${eventCount} EVENTS`;
+		}
+
+		function connectWebSocket() {
+			const wsUrl = `ws://${window.location.host}/ws/dashboard`;
+			const ws = new WebSocket(wsUrl);
+
+			ws.onopen = () => {
+				statusEl.classList.remove('offline');
+				statusText.innerText = 'CONNECTED';
+				appendLog('system', 'WebSocket connected to RLM Server');
+			};
+
+			ws.onclose = () => {
+				statusEl.classList.add('offline');
+				statusText.innerText = 'OFFLINE';
+				pipeline.classList.remove('active');
+				setTimeout(connectWebSocket, 2000);
+			};
+
+			ws.onerror = () => {
+				appendLog('error', 'WebSocket connection error');
+			};
+
+			ws.onmessage = (event) => {
+				try {
+					const payload = JSON.parse(event.data);
+
+					if (payload.type === 'stream_start') {
+						pipeline.classList.add('active');
+						appendLog('stream', `Stream started for <span class="log-highlight">${payload.data.model}</span> (Session: ${payload.data.session_id.substring(0, 8)})`);
+						if (payload.data.context_chars) {
+							updateMetric(metricContext, payload.data.context_chars);
+						}
+					}
+					else if (payload.type === 'stream_end') {
+						pipeline.classList.remove('active');
+						appendLog('stream', `Stream complete. Iteration <span class="log-highlight">${payload.data.iteration}</span>.`);
+						updateMetric(metricIter, payload.data.iteration);
+					}
+					else if (payload.type === 'tool_call') {
+						totalTools++;
+						updateMetric(metricTools, totalTools);
+						appendLog('tool', `Executed Tool: <span class="log-highlight">${payload.data.tool_name}</span>`);
+					}
+					else if (payload.type === 'system') {
+						appendLog('system', payload.data.message);
+					}
+				} catch (e) {
+					console.error("Failed to parse message", e);
+				}
+			};
+		}
+
+		// Start connection
+		connectWebSocket();
+
+		// Initial setup
+		updateMetric(metricContext, 0);
+		updateMetric(metricTools, 0);
+		updateMetric(metricIter, 0);
+	</script>
+</body>
+
+</html>

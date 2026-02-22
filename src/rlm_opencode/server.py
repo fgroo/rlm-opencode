@@ -15,9 +15,11 @@ import time
 from typing import AsyncGenerator
 from uuid import uuid4
 
-from fastapi import FastAPI, HTTPException, Header
+from pathlib import Path
+
+from fastapi import FastAPI, HTTPException, Header, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, HTMLResponse
 from pydantic import BaseModel, Field
 from rich.console import Console
 
@@ -390,9 +392,47 @@ def inject_tools(request: ChatCompletionRequest, session_id: str) -> tuple[list[
     return messages, all_tools
 
 
+class DashboardManager:
+    def __init__(self):
+        self.active_connections: list[WebSocket] = []
+
+    async def connect(self, websocket: WebSocket):
+        await websocket.accept()
+        self.active_connections.append(websocket)
+
+    def disconnect(self, websocket: WebSocket):
+        if websocket in self.active_connections:
+            self.active_connections.remove(websocket)
+
+    async def broadcast(self, event_type: str, data: dict):
+        if not self.active_connections:
+            return
+        message = {"type": event_type, "data": data}
+        for connection in self.active_connections.copy():
+            try:
+                await connection.send_json(message)
+            except Exception:
+                pass
+
+dashboard_mgr = DashboardManager()
+
+
 @app.get("/")
 async def root():
-    return {"message": "RLM-OpenCode", "version": __version__, "mode": "true-rlm"}
+    dashboard_path = Path(__file__).parent / "dashboard.html"
+    if dashboard_path.exists():
+        return HTMLResponse(content=dashboard_path.read_text(), status_code=200)
+    return HTMLResponse(content="Dashboard not found", status_code=404)
+
+
+@app.websocket("/ws/dashboard")
+async def websocket_dashboard(websocket: WebSocket):
+    await dashboard_mgr.connect(websocket)
+    try:
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        dashboard_mgr.disconnect(websocket)
 
 
 @app.get("/health")
@@ -521,6 +561,12 @@ async def _stream_with_tools(
     session_entries = [e.__dict__ if hasattr(e, '__dict__') else e for e in (session.entries if session else [])]
     session_stats = session.stats.__dict__ if session and session.stats else None
     
+    await dashboard_mgr.broadcast("stream_start", {
+        "session_id": session_id,
+        "model": model_id,
+        "context_chars": len(context) if context else 0,
+    })
+    
     current_messages = list(messages)
     max_iterations = 10  # Prevent infinite loops
     
@@ -638,6 +684,7 @@ async def _stream_with_tools(
                 session_manager.append(session_id, "assistant_response", f"[Assistant]\n{full_content[:RLM_CAPTURE_MAX_CHARS]}")
             
             console.print(f"[green][_stream] Complete (iter {iteration+1}): {len(full_content)} chars, {len(non_rlm_tool_calls)} tool calls[/green]")
+            await dashboard_mgr.broadcast("stream_end", {"iteration": iteration + 1})
             yield "data: [DONE]\n\n"
             return
         
@@ -667,6 +714,8 @@ async def _stream_with_tools(
             
             result_text = json.dumps(result.result, indent=2) if result.success else f"Error: {result.error}"
             console.print(f"[dim]  {tool_name}({args}) → {len(result_text)} chars[/dim]")
+            
+            await dashboard_mgr.broadcast("tool_call", {"tool_name": tool_name})
             
             # Capture the rlm tool invocation into context
             summary = format_tool_result_for_message(result)
@@ -705,6 +754,7 @@ async def _stream_with_tools(
         "choices": [{"index": 0, "delta": {"content": "[RLM: Maximum tool iterations reached]"}, "finish_reason": "stop"}]
     }
     yield f"data: {json.dumps(data)}\n\n"
+    await dashboard_mgr.broadcast("stream_end", {"iteration": max_iterations})
     yield "data: [DONE]\n\n"
 
 
