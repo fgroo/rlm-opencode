@@ -92,7 +92,7 @@ RLM_ASSISTANT_MIN_CHARS = int(os.environ.get("RLM_ASSISTANT_MIN_CHARS", "50")) #
 UPSTREAM_MAX_TOKENS = int(os.environ.get("RLM_UPSTREAM_MAX_TOKENS", "128000")) # Upstream model's real context window
 TOKEN_RESERVE = int(os.environ.get("RLM_TOKEN_RESERVE", "16000"))              # Reserve for response + tools
 RLM_SUMMARIZE_MODEL = os.environ.get("RLM_SUMMARIZE_MODEL")                    # Optional override for summarize model
-
+RLM_STRICT_MODE = os.environ.get("RLM_STRICT_MODE", "").lower() in ("1", "true", "yes")
 
 def estimate_tokens(text: str) -> int:
     """Rough token estimate: ~4 chars per token."""
@@ -357,6 +357,14 @@ Instead of seeing the full context, you have TOOLS to access it on-demand:
 
 Remember: You DON'T need to read the entire context. Summarize large chunks or search first, then read relevant sections.
 """
+
+    if RLM_STRICT_MODE:
+        prompt += """
+🚨 STRICT RLM MODE ENABLED 🚨
+Your visible conversation history has been heavily truncated. Older messages were deliberately deleted.
+If the user references ANY past code, decision, or file that is not in your immediate visible messages, you MUST use `rlm_summarize`, `rlm_search`, or `rlm_get_context` to find it.
+DO NOT GUESS. DO NOT SAY YOU DON'T KNOW. USE YOUR TOOLS FIRST.
+"""
     return prompt
 
 
@@ -425,7 +433,9 @@ dashboard_mgr = DashboardManager()
 async def root():
     dashboard_path = Path(__file__).parent / "dashboard.html"
     if dashboard_path.exists():
-        return HTMLResponse(content=dashboard_path.read_text(), status_code=200)
+        content = dashboard_path.read_text()
+        content = content.replace("___STRICT_MODE_TEMPLATE___", "true" if RLM_STRICT_MODE else "false")
+        return HTMLResponse(content=content, status_code=200)
     return HTMLResponse(content="Dashboard not found", status_code=404)
 
 
@@ -441,7 +451,7 @@ async def websocket_dashboard(websocket: WebSocket):
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "version": __version__, "mode": "true-rlm"}
+    return {"status": "ok", "version": __version__, "mode": "true-rlm", "strict": RLM_STRICT_MODE}
 
 
 @app.post("/v1/chat/completions")

@@ -140,6 +140,40 @@
 			text-shadow: 0 0 5px rgba(0, 240, 255, 0.5);
 		}
 
+		.strict-badge {
+			display: none;
+			padding: 4px 8px;
+			background: rgba(255, 0, 127, 0.1);
+			border: 1px solid var(--neon-pink);
+			color: var(--neon-pink);
+			font-family: 'JetBrains Mono', monospace;
+			font-size: 0.75rem;
+			font-weight: bold;
+			border-radius: 4px;
+			text-shadow: 0 0 5px rgba(255, 0, 127, 0.8);
+			box-shadow: 0 0 10px rgba(255, 0, 127, 0.2);
+			letter-spacing: 1px;
+			animation: pulsePink 2s infinite;
+		}
+
+		.strict-badge.active {
+			display: inline-block;
+		}
+
+		@keyframes pulsePink {
+			0% {
+				box-shadow: 0 0 5px rgba(255, 0, 127, 0.2);
+			}
+
+			50% {
+				box-shadow: 0 0 15px rgba(255, 0, 127, 0.6);
+			}
+
+			100% {
+				box-shadow: 0 0 5px rgba(255, 0, 127, 0.2);
+			}
+		}
+
 		.status-dot {
 			width: 12px;
 			height: 12px;
@@ -465,7 +499,10 @@
 
 	<div class="container">
 		<header>
-			<div class="title">RLM-OpenCode Live</div>
+			<div style="display: flex; align-items: center; gap: 20px;">
+				<div class="title">RLM-OpenCode Live</div>
+				<div id="strict-badge" class="strict-badge">STRICT MODE</div>
+			</div>
 			<div class="status" id="connection-status">
 				<div class="status-dot"></div>
 				<span id="status-text">CONNECTING...</span>
@@ -541,6 +578,13 @@
 		const statusText = document.getElementById('status-text');
 		const pipeline = document.getElementById('pipeline-indicator');
 		const logCount = document.getElementById('log-count');
+		const strictBadge = document.getElementById('strict-badge');
+
+		// Check strict mode template injection
+		const isStrictMode = "___STRICT_MODE_TEMPLATE___" === "true";
+		if (isStrictMode) {
+			strictBadge.classList.add('active');
+		}
 
 		let eventCount = 0;
 		let totalTools = 0;
