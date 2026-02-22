@@ -279,6 +279,22 @@ def join(
         console.print(f"[red]Error:[/red] Could not find session {session_to_redirect}")
 
 
+@app.command(name="import")
+def import_ctx(
+    file_path: str = typer.Argument(..., help="Path to the raw context.txt file to import"),
+):
+    """Import a raw context.txt file from another machine into a new session."""
+    from rlm_opencode.session import session_manager
+    
+    try:
+        session = session_manager.import_context_file(file_path)
+        console.print(f"\n[bold green]Import Complete![/bold green]")
+        console.print(f"You can now link your active OpenCode chat to this imported session:")
+        console.print(f"  [cyan]rlm-opencode join <your_active_chat_id> {session.id}[/cyan]")
+    except Exception as e:
+        console.print(f"[red]Error importing context:[/red] {e}")
+
+
 @app.command()
 def unjoin(
     session_id: str = typer.Argument(..., help="The ID of the session to un-link"),

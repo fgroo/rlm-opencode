@@ -467,6 +467,39 @@ class SessionManager:
         
         return f"## RLM Context ({stats.total_chars:,} chars, {total_mb:.2f} MB){mode}\nTools: {stats.tool_outputs} | Files: {stats.files_read} | Thinking: {stats.thinking_blocks}\n"
     
+    def import_context_file(self, file_path: str) -> Session:
+        """Import a raw context.txt file and rebuild the session and indices.
+        
+        This makes RLM sessions completely portable between machines.
+        """
+        path = Path(file_path).resolve()
+        if not path.exists():
+            raise FileNotFoundError(f"Context file not found: {path}")
+            
+        content = path.read_text(errors="replace")
+        chunks = content.split("---ENTRY_SEPARATOR---\n")
+        
+        session = self.create_session()
+        
+        from rich.progress import track
+        
+        # Parse chunks and append
+        for chunk in track(chunks, description="Importing context...", transient=True):
+            if not chunk.strip():
+                continue
+                
+            entry_type = "user_message"
+            if chunk.startswith("[Tool:"):
+                entry_type = "tool_result"
+            elif chunk.startswith("[Thinking]"):
+                entry_type = "thinking"
+                
+            # append() automatically handles building DB indices and saving state!
+            self.append(session.id, entry_type, chunk)
+            
+        console.print(f"[green]Successfully imported {len(chunks)} entries to new session [cyan]{session.id}[/cyan][/green]")
+        return session
+    
     def delete_session(self, session_id: str) -> bool:
         """Delete a session."""
         session = self.get_raw_session(session_id)
