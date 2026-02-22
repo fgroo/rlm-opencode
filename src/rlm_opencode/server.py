@@ -743,6 +743,7 @@ async def _stream_with_tools(
                 session_entries=session_entries,
                 provider=provider,
                 summarize_model_id=RLM_SUMMARIZE_MODEL or model_id,
+                session_id=session_id,
             )
             
             result_text = json.dumps(result.result, indent=2) if result.success else f"Error: {result.error}"

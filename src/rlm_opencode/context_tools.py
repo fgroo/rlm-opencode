@@ -159,6 +159,31 @@ def get_context_tools_definition() -> list[dict]:
                     }
                 }
             }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "rlm_forget",
+                "description": "Permanently delete/redact a block of irrelevant history from your long-term context (e.g., failed debugging sessions). Use this to clean your memory and improve search relevance.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "offset": {
+                            "type": "integer",
+                            "description": "Start position of the block to forget"
+                        },
+                        "length": {
+                            "type": "integer",
+                            "description": "Number of characters to forget"
+                        },
+                        "reason": {
+                            "type": "string",
+                            "description": "A concise reason for forgetting this context (e.g., 'Cleared 4 failed python tracebacks'). This will remain as a tombstone."
+                        }
+                    },
+                    "required": ["offset", "length", "reason"]
+                }
+            }
         }
     ]
 
@@ -171,6 +196,7 @@ async def execute_context_tool(
     session_entries: list[dict] | None = None,
     provider: Any = None,
     summarize_model_id: str | None = None,
+    session_id: str | None = None,
 ) -> ContextToolResult:
     """Execute a context tool and return the result.
     
@@ -204,6 +230,35 @@ async def execute_context_tool(
         
         elif tool_name == "rlm_get_entries":
             return _tool_get_entries(session_entries or [], arguments)
+            
+        elif tool_name == "rlm_forget":
+            from rlm_opencode.session import session_manager
+            
+            offset = arguments.get("offset")
+            length = arguments.get("length")
+            reason = arguments.get("reason", "No reason provided")
+            
+            if offset is None or length is None:
+                raise ValueError("Both offset and length are required for rlm_forget")
+                
+            if not session_id:
+                raise ValueError("Session ID is required to use rlm_forget")
+                
+            success = session_manager.forget_context(session_id, offset, length, reason)
+            
+            if success:
+                return ContextToolResult(
+                    tool_name="rlm_forget",
+                    success=True,
+                    result={"message": f"Successfully redacted {length} characters at offset {offset}. Indices have been rebuilt."},
+                )
+            else:
+                return ContextToolResult(
+                    tool_name="rlm_forget",
+                    success=False,
+                    result={},
+                    error="Failed to prune context. Session may not exist."
+                )
         
         else:
             return ContextToolResult(

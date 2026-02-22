@@ -491,6 +491,67 @@ class SessionManager:
         
         return f"## RLM Context ({stats.total_chars:,} chars, {total_mb:.2f} MB){mode}\nTools: {stats.tool_outputs} | Files: {stats.files_read} | Thinking: {stats.thinking_blocks}\n"
     
+    def forget_context(self, session_id: str, offset: int, length: int, reason: str) -> bool:
+        """Permanently redact a section of context and completely rebuild indices."""
+        session = self.get_session(session_id)
+        if not session:
+            return False
+            
+        with self._locks[session.id]:
+            # Read full current context
+            if session.incognito:
+                full_text = self._incognito_contexts.get(session.id, "")
+            else:
+                context_path = CONTEXTS_DIR / session.context_file
+                if not context_path.exists():
+                    return False
+                full_text = context_path.read_text(errors="replace")
+                
+            if offset >= len(full_text) or offset < 0:
+                return False
+                
+            actual_length = min(length, len(full_text) - offset)
+                
+            tombstone = (
+                f"\n===================================================================\n"
+                f"[MEMORY REDACTED]\n"
+                f"Reason: {reason}\n"
+                f"Original size: {actual_length} characters\n"
+                f"===================================================================\n"
+            )
+            
+            # Splice
+            new_text = full_text[:offset] + tombstone + full_text[offset + actual_length:]
+            
+            # Wipe current entries and stats
+            session.entries = []
+            session.stats = SessionStats()
+            
+            if session.incognito:
+                self._incognito_contexts[session.id] = ""
+            else:
+                context_path.write_text("")
+                with self._get_db() as conn:
+                    conn.execute("DELETE FROM entries WHERE session_id = ?", (session.id,))
+                    
+            # Rebuild by appending chunks
+            chunks = new_text.split("---ENTRY_SEPARATOR---\n")
+            for chunk in chunks:
+                if not chunk.strip():
+                    continue
+                    
+                entry_type = "user_message"
+                if chunk.startswith("[Tool:"):
+                    entry_type = "tool_result"
+                elif chunk.startswith("[Thinking]"):
+                    entry_type = "thinking"
+                elif chunk.startswith("\n====================="):
+                    entry_type = "memory_redaction"
+                    
+                self.append(session.id, entry_type, chunk)
+                
+        return True
+    
     def import_context_file(self, file_path: str) -> Session:
         """Import a raw context.txt file and rebuild the session and indices.
         
