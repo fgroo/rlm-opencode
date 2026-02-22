@@ -133,16 +133,44 @@ def get_context_tools_definition() -> list[dict]:
                     }
                 }
             }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "rlm_summarize",
+                "description": "Read a large chunk of context and return a dense, bulleted summary. Use this to skim history when you don't know the exact keywords to search for.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "offset": {
+                            "type": "integer",
+                            "description": "Start position in context (default: 0)",
+                            "default": 0
+                        },
+                        "length": {
+                            "type": "integer",
+                            "description": "Number of characters to summarize (default: 50000, max: 100000)",
+                            "default": 50000
+                        },
+                        "focus": {
+                            "type": "string",
+                            "description": "Optional hint on what specifically to focus on in the summary"
+                        }
+                    }
+                }
+            }
         }
     ]
 
 
-def execute_context_tool(
+async def execute_context_tool(
     tool_name: str,
     arguments: dict[str, Any],
     context: str,
     session_stats: dict[str, Any] | None = None,
     session_entries: list[dict] | None = None,
+    provider: Any = None,
+    summarize_model_id: str | None = None,
 ) -> ContextToolResult:
     """Execute a context tool and return the result.
     
@@ -152,6 +180,8 @@ def execute_context_tool(
         context: Full session context string
         session_stats: Statistics about the session
         session_entries: List of context entries
+        provider: Provider instance for making upstream calls (needed for rlm_summarize)
+        summarize_model_id: Model to use for summarization
         
     Returns:
         ContextToolResult with success/failure and data
@@ -159,6 +189,9 @@ def execute_context_tool(
     try:
         if tool_name == "rlm_get_context":
             return _tool_get_context(context, arguments)
+        
+        elif tool_name == "rlm_summarize":
+            return await _tool_summarize(context, arguments, provider, summarize_model_id)
         
         elif tool_name == "rlm_search":
             return _tool_search(context, arguments)
@@ -216,6 +249,72 @@ def _tool_get_context(context: str, args: dict) -> ContextToolResult:
             "has_more": end_offset < len(context),
         }
     )
+
+
+async def _tool_summarize(context: str, args: dict, provider: Any, model_id: str | None) -> ContextToolResult:
+    """Summarize a large chunk of context using an upstream model."""
+    if not provider or not model_id:
+        return ContextToolResult(
+            tool_name="rlm_summarize",
+            success=False,
+            result={},
+            error="Summarization provider/model not configured."
+        )
+
+    offset = max(0, args.get("offset", 0))
+    length = min(100000, max(1, args.get("length", 50000)))
+    focus = args.get("focus", "")
+    
+    if offset >= len(context):
+        return ContextToolResult(
+            tool_name="rlm_summarize",
+            success=False,
+            result={},
+            error=f"Offset {offset} exceeds context length {len(context)}"
+        )
+    
+    chunk = context[offset:offset + length]
+    end_offset = min(offset + length, len(context))
+    
+    prompt = "Summarize the following historical context chunk from a coding session."
+    if focus:
+        prompt += f" Pay special attention to: {focus}."
+    prompt += " Keep it dense, bulleted, and focus on technical decisions, code changes, and problem-solving steps.\n\n"
+    prompt += f"--- CONTEXT (Offset: {offset}, Length: {len(chunk)}) ---\n"
+    prompt += chunk
+
+    try:
+        # provider.stream returns an AsyncGenerator[StreamChunk, None]
+        chunks = []
+        async for completion_chunk in provider.stream(
+            model_id=model_id,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.3, # Low temperature for factual summarization
+            max_tokens=1000,
+            tools=None
+        ):
+            chunks.append(completion_chunk.content)
+            
+        summary = "".join(chunks)
+        
+        return ContextToolResult(
+            tool_name="rlm_summarize",
+            success=True,
+            result={
+                "summary": summary,
+                "offset": offset,
+                "length": len(chunk),
+                "focus": focus or "general",
+                "has_more": end_offset < len(context),
+            }
+        )
+    except Exception as e:
+        return ContextToolResult(
+            tool_name="rlm_summarize",
+            success=False,
+            result={},
+            error=f"Summarization failed: {str(e)}"
+        )
 
 
 def _tool_search(context: str, args: dict) -> ContextToolResult:

@@ -91,6 +91,7 @@ RLM_USER_MIN_CHARS = int(os.environ.get("RLM_USER_MIN_CHARS", "0"))            #
 RLM_ASSISTANT_MIN_CHARS = int(os.environ.get("RLM_ASSISTANT_MIN_CHARS", "50")) # Min chars for assistant responses
 UPSTREAM_MAX_TOKENS = int(os.environ.get("RLM_UPSTREAM_MAX_TOKENS", "128000")) # Upstream model's real context window
 TOKEN_RESERVE = int(os.environ.get("RLM_TOKEN_RESERVE", "16000"))              # Reserve for response + tools
+RLM_SUMMARIZE_MODEL = os.environ.get("RLM_SUMMARIZE_MODEL")                    # Optional override for summarize model
 
 
 def estimate_tokens(text: str) -> int:
@@ -339,7 +340,8 @@ You have access to accumulated context from this session:
 - **Tool Results Captured**: {stats.tool_outputs if stats else 0}
 
 Instead of seeing the full context, you have TOOLS to access it on-demand:
-- `rlm_get_context(offset, length)` - Get a chunk of context
+- `rlm_summarize(offset, length, focus)` - Get a dense summary of a huge chunk
+- `rlm_get_context(offset, length)` - Get an exact extract of context
 - `rlm_search(pattern, max_results)` - Search with regex
 - `rlm_find(text, max_results)` - Find exact text
 - `rlm_stats()` - Get context statistics
@@ -348,10 +350,12 @@ Instead of seeing the full context, you have TOOLS to access it on-demand:
 ## Strategy
 
 1. For SMALL contexts (<100K chars): You can read directly with rlm_get_context(0, 100000)
-2. For LARGE contexts: Use rlm_search() to find relevant sections, then rlm_get_context() to read them
+2. For LARGE contexts: 
+   - If you don't know the exact keywords to search for, use `rlm_summarize` to quickly skim huge sections.
+   - Once you find the right section, use `rlm_search` or `rlm_get_context` to read the exact details.
 3. Think about what you're looking for before searching - good patterns save tokens
 
-Remember: You DON'T need to read the entire context. Search first, then read relevant sections.
+Remember: You DON'T need to read the entire context. Summarize large chunks or search first, then read relevant sections.
 """
     return prompt
 
@@ -706,10 +710,12 @@ async def _stream_with_tools(
             except json.JSONDecodeError:
                 args = {}
             
-            result = execute_context_tool(
+            result = await execute_context_tool(
                 tool_name, args, context,
                 session_stats=session_stats,
                 session_entries=session_entries,
+                provider=provider,
+                summarize_model_id=RLM_SUMMARIZE_MODEL or model_id,
             )
             
             result_text = json.dumps(result.result, indent=2) if result.success else f"Error: {result.error}"
