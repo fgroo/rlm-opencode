@@ -467,7 +467,8 @@ async def websocket_dashboard(websocket: WebSocket):
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "version": __version__, "mode": "true-rlm", "strict": RLM_STRICT_MODE}
+    strict_level = session_manager.get_config().get("strict_mode_level", 0)
+    return {"status": "ok", "version": __version__, "mode": "true-rlm", "strict_level": strict_level}
 
 
 @app.post("/v1/chat/completions")
