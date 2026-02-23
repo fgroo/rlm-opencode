@@ -91,6 +91,7 @@ RLM_USER_MIN_CHARS = int(os.environ.get("RLM_USER_MIN_CHARS", "0"))            #
 RLM_ASSISTANT_MIN_CHARS = int(os.environ.get("RLM_ASSISTANT_MIN_CHARS", "50")) # Min chars for assistant responses
 UPSTREAM_MAX_TOKENS = int(os.environ.get("RLM_UPSTREAM_MAX_TOKENS", "128000")) # Upstream model's real context window
 TOKEN_RESERVE = int(os.environ.get("RLM_TOKEN_RESERVE", "16000"))              # Reserve for response + tools
+MAX_PAYLOAD_CHARS = int(os.environ.get("RLM_MAX_PAYLOAD_CHARS", "250000"))     # Absolute max characters to prevent API 500s
 RLM_SUMMARIZE_MODEL = os.environ.get("RLM_SUMMARIZE_MODEL")                    # Optional override for summarize model
 
 def estimate_tokens(text: str) -> int:
@@ -115,6 +116,7 @@ def truncate_messages(
     messages: list[dict],
     max_tokens: int = UPSTREAM_MAX_TOKENS,
     reserve: int = TOKEN_RESERVE,
+    max_chars: int = MAX_PAYLOAD_CHARS,
 ) -> list[dict]:
     """Truncate messages to fit the upstream model's context window.
     
@@ -125,7 +127,7 @@ def truncate_messages(
     1. Always keep: system messages (RLM instructions)
     2. Always keep: last user message (current task)
     3. Fill remaining budget backwards from most recent messages
-    4. If messages were dropped, insert a truncation notice
+    4. Enforce an absolute character limit to avoid hidden API gateway 500 errors
     """
     budget = max_tokens - reserve
     
@@ -138,21 +140,29 @@ def truncate_messages(
     
     # Calculate system prompt cost
     system_cost = sum(estimate_message_tokens(m) for m in system_msgs)
-    remaining_budget = budget - system_cost
+    system_chars = sum(len(str(m.get("content", ""))) for m in system_msgs)
     
-    if remaining_budget <= 0:
+    remaining_budget = budget - system_cost
+    remaining_chars = max_chars - system_chars
+    
+    if remaining_budget <= 0 or remaining_chars <= 0:
         return system_msgs + conv_msgs[-2:]  # At least keep last exchange
     
-    # Fill backwards from most recent messages
+    # Keep adding recent messages until token/char budget is full
     kept_msgs = []
     total_tokens = 0
+    total_chars = 0
     
     for msg in reversed(conv_msgs):
         msg_tokens = estimate_message_tokens(msg)
-        if total_tokens + msg_tokens > remaining_budget:
+        msg_chars = len(str(msg.get("content", "")))
+        
+        if total_tokens + msg_tokens > remaining_budget or total_chars + msg_chars > remaining_chars:
             break
+            
         kept_msgs.insert(0, msg)
         total_tokens += msg_tokens
+        total_chars += msg_chars
     
     dropped_count = len(conv_msgs) - len(kept_msgs)
     
