@@ -205,6 +205,14 @@ def status():
         marker = " [cyan](custom)[/cyan]" if is_custom else ""
         console.print(f"  {var}={val}{marker}")
 
+    cfg = session_manager.get_config()
+    console.print()
+    console.print("[dim]Config (Persistent json config):[/dim]")
+    if not cfg:
+        console.print("  [dim]No persistent config set.[/dim]")
+    for k, v in cfg.items():
+        console.print(f"  {k} = [cyan]{v}[/cyan]")
+
 
 @app.command()
 def strict(
@@ -241,6 +249,44 @@ def strict(
     console.print(f"Strict Mode updated to: [{style}]Level {level}[/{style}]")
     if level > 0:
         console.print("The RLM server will now aggressively instruct the model to use context tools.")
+
+
+@app.command()
+def config(
+    key: str = typer.Argument(None, help="Config key to set or view"),
+    value: str = typer.Argument(None, help="Value to set"),
+):
+    """View or set persistent configuration variables (e.g. max_payload_chars)."""
+    from rlm_opencode.session import session_manager
+    cfg = session_manager.get_config()
+    
+    if key is None:
+        console.print("[bold]Current Configuration:[/bold]")
+        for k, v in cfg.items():
+            console.print(f"  {k}: [cyan]{v}[/cyan]")
+        if not cfg:
+            console.print("  [dim]No configuration set.[/dim]")
+        return
+        
+    if value is None:
+        if key in cfg:
+            console.print(f"{key}: [cyan]{cfg[key]}[/cyan]")
+        else:
+            console.print(f"[dim]Key '{key}' not set in config.[/dim]")
+        return
+        
+    try:
+        parsed_val = int(value)
+    except ValueError:
+        if value.lower() in ["true", "false"]:
+            parsed_val = value.lower() == "true"
+        else:
+            parsed_val = value
+            
+    cfg[key] = parsed_val
+    session_manager._save_config(cfg)
+    console.print(f"[green]Set config:[/green] {key} = {parsed_val}")
+    console.print("[dim]Restart the server for changes to take full effect.[/dim]")
 
 
 @app.command()

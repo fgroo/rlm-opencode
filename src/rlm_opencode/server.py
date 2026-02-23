@@ -116,7 +116,7 @@ def truncate_messages(
     messages: list[dict],
     max_tokens: int = UPSTREAM_MAX_TOKENS,
     reserve: int = TOKEN_RESERVE,
-    max_chars: int = MAX_PAYLOAD_CHARS,
+    max_chars: int | None = None,
 ) -> list[dict]:
     """Truncate messages to fit the upstream model's context window.
     
@@ -129,6 +129,10 @@ def truncate_messages(
     3. Fill remaining budget backwards from most recent messages
     4. Enforce an absolute character limit to avoid hidden API gateway 500 errors
     """
+    if max_chars is None:
+        from rlm_opencode.session import session_manager
+        max_chars = session_manager.get_config().get("max_payload_chars", MAX_PAYLOAD_CHARS)
+        
     budget = max_tokens - reserve
     
     # Separate system messages and conversation messages
