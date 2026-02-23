@@ -258,18 +258,20 @@ def config(
 ):
     """View or set persistent configuration variables (e.g. rlm_max_payload_chars)."""
     from rlm_opencode.session import session_manager
-    from rlm_opencode.server import RLM_DEFAULT_SETTINGS, get_setting
+    from rlm_opencode.server import RLM_DEFAULT_SETTINGS, RLM_SETTING_DESCRIPTIONS, get_setting
     
     cfg = session_manager.get_config()
     
     if key is None:
         console.print("[bold]Current Active Configuration:[/bold]")
-        console.print("[dim](Priority: JSON > ENV > Default)[/dim]")
+        console.print("[dim](Priority: JSON > ENV > Default)[/dim]\n")
         
         # Always show strict mode
         strict_val = cfg.get("strict_mode_level", 0)
         source = "[yellow](custom JSON)[/yellow]" if "strict_mode_level" in cfg else "[dim](default)[/dim]"
-        console.print(f"  strict_mode_level: [cyan]{strict_val}[/cyan] {source}")
+        desc = RLM_SETTING_DESCRIPTIONS.get("strict_mode_level", "")
+        console.print(f"  [bold]strict_mode_level[/bold]: [cyan]{strict_val}[/cyan] {source}")
+        console.print(f"    [dim italic]↳ {desc}[/dim italic]")
         
         # Iterating over all known default keys to build a comprehensive list
         for default_key in RLM_DEFAULT_SETTINGS.keys():
@@ -281,7 +283,11 @@ def config(
             else:
                 source = "[dim](default)[/dim]"
             
-            console.print(f"  {default_key}: [cyan]{val}[/cyan] {source}")
+            desc = RLM_SETTING_DESCRIPTIONS.get(default_key, "")
+            console.print(f"\n  [bold]{default_key}[/bold]: [cyan]{val}[/cyan] {source}")
+            console.print(f"    [dim italic]↳ {desc}[/dim italic]")
+            
+        console.print()
         return
         
     if value is None:

@@ -97,6 +97,18 @@ RLM_DEFAULT_SETTINGS = {
     "rlm_summarize_model": None,
 }
 
+RLM_SETTING_DESCRIPTIONS = {
+    "strict_mode_level": "[0-4] Forces LLM to rely on tools (4 = Maximum Amnesia)",
+    "rlm_capture_min_chars": "Minimum characters for a tool result to be saved into the context lake (0 = all)",
+    "rlm_capture_max_chars": "Maximum characters allowed per single entry in the context lake before truncation",
+    "rlm_user_min_chars": "Minimum characters for a user message to be captured into the context lake (0 = all)",
+    "rlm_assistant_min_chars": "Minimum characters for an assistant response to be captured into the context lake",
+    "rlm_upstream_max_tokens": "The raw token limit of the underlying LLM's architecture",
+    "rlm_token_reserve": "Budget reserved for the model's generation output and tool responses",
+    "rlm_max_payload_chars": "Absolute size limit of the immediate workspace injected natively into the LLM prompt",
+    "rlm_summarize_model": "Optional specific model override used exclusively for rlm_summarize tool calls",
+}
+
 def get_setting(key: str) -> any:
     """Get configuration with priority: Persistent JSON -> ENV var -> Default."""
     # 1. Try persistent config
