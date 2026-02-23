@@ -193,6 +193,7 @@ def status():
     env_vars = [
         ("RLM_UPSTREAM_MAX_TOKENS", "128000"),
         ("RLM_TOKEN_RESERVE", "16000"),
+        ("RLM_MAX_PAYLOAD_CHARS", "250000"),
         ("RLM_CAPTURE_MIN_CHARS", "500"),
         ("RLM_USER_MIN_CHARS", "0"),
         ("RLM_ASSISTANT_MIN_CHARS", "50"),
