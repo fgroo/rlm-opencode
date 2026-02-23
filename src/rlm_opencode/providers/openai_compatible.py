@@ -60,28 +60,47 @@ class OpenAICompatibleProvider(BaseProvider):
         payload.update(kwargs)
         
         import sys
+        import asyncio
+        
+        max_retries = 3
+        base_backoff = 2.0
+        
         print(f"[OpenAICompat] POST {url} model={model_id}", file=sys.stderr, flush=True)
         
-        async with httpx.AsyncClient(timeout=300.0) as client:
-            async with client.stream(
-                "POST",
-                url,
-                headers=headers,
-                json=payload,
-            ) as response:
-                print(f"[OpenAICompat] Response status: {response.status_code}", file=sys.stderr, flush=True)
-                
-                if response.status_code != 200:
-                    error_text = await response.aread()
-                    print(f"[OpenAICompat] Error: {error_text.decode()}", file=sys.stderr, flush=True)
-                    raise Exception(f"API error {response.status_code}: {error_text.decode()}")
-                
-                line_count = 0
-                chunk_count = 0
-                async for line in response.aiter_lines():
-                    line_count += 1
-                    if not line:
-                        continue
+        for attempt in range(max_retries):
+            try:
+                async with httpx.AsyncClient(timeout=300.0) as client:
+                    async with client.stream(
+                        "POST",
+                        url,
+                        headers=headers,
+                        json=payload,
+                    ) as response:
+                        print(f"[OpenAICompat] Response status: {response.status_code}", file=sys.stderr, flush=True)
+                        
+                        if response.status_code >= 500:
+                            error_text = await response.aread()
+                            error_msg = f"API error {response.status_code}: {error_text.decode()}"
+                            if attempt < max_retries - 1:
+                                wait_time = base_backoff * (2 ** attempt)
+                                print(f"[OpenAICompat] Transient 5xx error ({response.status_code}). Retrying in {wait_time}s... (Attempt {attempt+1}/{max_retries})", file=sys.stderr, flush=True)
+                                await asyncio.sleep(wait_time)
+                                continue
+                            else:
+                                print(f"[OpenAICompat] Error: {error_text.decode()}", file=sys.stderr, flush=True)
+                                raise Exception(error_msg)
+                        elif response.status_code != 200:
+                            # 4xx errors are usually fatal (bad request, unauthorized) so we don't retry
+                            error_text = await response.aread()
+                            print(f"[OpenAICompat] Fatal Error {response.status_code}: {error_text.decode()}", file=sys.stderr, flush=True)
+                            raise Exception(f"API error {response.status_code}: {error_text.decode()}")
+                        
+                        line_count = 0
+                        chunk_count = 0
+                        async for line in response.aiter_lines():
+                            line_count += 1
+                            if not line:
+                                continue
                     
                     if line.startswith("data: "):
                         data_str = line[6:]
@@ -115,4 +134,15 @@ class OpenAICompatibleProvider(BaseProvider):
                                 reasoning=reasoning,
                             )
                 
-                print(f"[OpenAICompat] Stream ended: {line_count} lines, {chunk_count} chunks", file=sys.stderr, flush=True)
+                    print(f"[OpenAICompat] Stream ended: {line_count} lines, {chunk_count} chunks", file=sys.stderr, flush=True)
+                    return # Subroutine complete safely without exception.
+            except httpx.RequestError as e:
+                # Catch network level issues: ReadTimeout, ConnectTimeout, NetworkError
+                if attempt < max_retries - 1:
+                    wait_time = base_backoff * (2 ** attempt)
+                    print(f"[OpenAICompat] Network request error: {e}. Retrying in {wait_time}s... (Attempt {attempt+1}/{max_retries})", file=sys.stderr, flush=True)
+                    await asyncio.sleep(wait_time)
+                    continue
+                else:
+                    print(f"[OpenAICompat] Fatal Network Error after {max_retries} attempts: {e}", file=sys.stderr, flush=True)
+                    raise Exception(f"Network error: {e}")
