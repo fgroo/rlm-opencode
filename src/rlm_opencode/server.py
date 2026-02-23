@@ -403,13 +403,15 @@ def inject_tools(request: ChatCompletionRequest, session_id: str) -> tuple[list[
     messages = []
     
     rlm_system = build_rlm_system_prompt(session_id)
-    has_system = any(msg.role == "system" for msg in request.messages)
-    
-    if not has_system:
-        messages.append({"role": "system", "content": rlm_system})
+    system_injected = False
     
     for msg in request.messages:
         msg_dict = {"role": msg.role, "content": msg.content}
+        
+        if msg.role == "system" and not system_injected:
+            msg_dict["content"] = msg_dict["content"] + "\n\n" + rlm_system
+            system_injected = True
+            
         if msg.tool_calls:
             msg_dict["tool_calls"] = msg.tool_calls
         if msg.tool_call_id:
@@ -417,6 +419,9 @@ def inject_tools(request: ChatCompletionRequest, session_id: str) -> tuple[list[
         if msg.name:
             msg_dict["name"] = msg.name
         messages.append(msg_dict)
+        
+    if not system_injected:
+        messages.insert(0, {"role": "system", "content": rlm_system})
     
     # TRUNCATE: Per RLM paper Algorithm 1, only recent turns + metadata
     # go to the LLM. Full context is accessible via tools.
