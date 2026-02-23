@@ -85,14 +85,35 @@ class ChatCompletionResponse(BaseModel):
 
 # Configurable thresholds (env vars)
 import os
-RLM_CAPTURE_MIN_CHARS = int(os.environ.get("RLM_CAPTURE_MIN_CHARS", "500"))    # Min chars for tool results (0 = all)
-RLM_CAPTURE_MAX_CHARS = int(os.environ.get("RLM_CAPTURE_MAX_CHARS", "50000"))  # Max chars per entry
-RLM_USER_MIN_CHARS = int(os.environ.get("RLM_USER_MIN_CHARS", "0"))            # Min chars for user messages (0 = all)
-RLM_ASSISTANT_MIN_CHARS = int(os.environ.get("RLM_ASSISTANT_MIN_CHARS", "50")) # Min chars for assistant responses
-UPSTREAM_MAX_TOKENS = int(os.environ.get("RLM_UPSTREAM_MAX_TOKENS", "128000")) # Upstream model's real context window
-TOKEN_RESERVE = int(os.environ.get("RLM_TOKEN_RESERVE", "16000"))              # Reserve for response + tools
-MAX_PAYLOAD_CHARS = int(os.environ.get("RLM_MAX_PAYLOAD_CHARS", "250000"))     # Absolute max characters to prevent API 500s
-RLM_SUMMARIZE_MODEL = os.environ.get("RLM_SUMMARIZE_MODEL")                    # Optional override for summarize model
+# Default configurations
+DEFAULT_SETTINGS = {
+    "rlm_capture_min_chars": 500,
+    "rlm_capture_max_chars": 50000,
+    "rlm_user_min_chars": 0,
+    "rlm_assistant_min_chars": 50,
+    "rlm_upstream_max_tokens": 128000,
+    "rlm_token_reserve": 16000,
+    "rlm_max_payload_chars": 250000,
+    "rlm_summarize_model": None,
+}
+
+def get_setting(key: str) -> any:
+    """Get configuration with priority: Persistent JSON -> ENV var -> Default."""
+    # 1. Try persistent config
+    config = session_manager.get_config()
+    if key in config:
+        return config[key]
+    
+    # 2. Try ENV var
+    env_key = key.upper()
+    if env_key in os.environ:
+        val = os.environ[env_key]
+        if key == "rlm_summarize_model":
+            return val
+        return int(val)
+        
+    # 3. Default
+    return DEFAULT_SETTINGS.get(key)
 
 def estimate_tokens(text: str) -> int:
     """Rough token estimate: ~4 chars per token."""
@@ -114,8 +135,8 @@ def estimate_message_tokens(msg: dict) -> int:
 
 def truncate_messages(
     messages: list[dict],
-    max_tokens: int = UPSTREAM_MAX_TOKENS,
-    reserve: int = TOKEN_RESERVE,
+    max_tokens: int | None = None,
+    reserve: int | None = None,
     max_chars: int | None = None,
 ) -> list[dict]:
     """Truncate messages to fit the upstream model's context window.
@@ -129,9 +150,12 @@ def truncate_messages(
     3. Fill remaining budget backwards from most recent messages
     4. Enforce an absolute character limit to avoid hidden API gateway 500 errors
     """
+    if max_tokens is None:
+        max_tokens = get_setting("rlm_upstream_max_tokens")
+    if reserve is None:
+        reserve = get_setting("rlm_token_reserve")
     if max_chars is None:
-        from rlm_opencode.session import session_manager
-        max_chars = session_manager.get_config().get("max_payload_chars", MAX_PAYLOAD_CHARS)
+        max_chars = get_setting("rlm_max_payload_chars")
         
     budget = max_tokens - reserve
     
@@ -308,12 +332,15 @@ def capture_content(messages: list[ChatMessage], session_id: str):
         if msg.role == "tool" and msg.content:
             tool_name = msg.name or tool_id_to_name.get(msg.tool_call_id or "", "") or "external_tool"
             content = _extract_text(msg.content)
-            if content.strip() and len(content) >= RLM_CAPTURE_MIN_CHARS:
+            # Truncate content if too huge to keep DB small
+            cap_min = get_setting("rlm_capture_min_chars")
+            cap_max = get_setting("rlm_capture_max_chars")
+            if content.strip() and len(content) >= cap_min:
                 session_manager.append(
-                    session_id, 
-                    "tool_result", 
-                    f"[Tool: {tool_name}]\n{content[:RLM_CAPTURE_MAX_CHARS]}",
-                    metadata={"tool": tool_name, "truncated": len(content) > RLM_CAPTURE_MAX_CHARS}
+                    session_id,
+                    "tool_output",
+                    f"[Tool: {tool_name}]\n{content[:cap_max]}",
+                    metadata={"tool": tool_name, "truncated": len(content) > cap_max}
                 )
                 captured += 1
         
@@ -326,12 +353,14 @@ def capture_content(messages: list[ChatMessage], session_id: str):
             # Skip title-generation requests
             if content.lower().startswith(_TITLE_PREFIXES):
                 continue
-            if content.strip() and len(content) >= RLM_USER_MIN_CHARS:
+            usr_min = get_setting("rlm_user_min_chars")
+            cap_max = get_setting("rlm_capture_max_chars")
+            if content.strip() and len(content) >= usr_min:
                 session_manager.append(
                     session_id,
                     "user_message",
-                    f"[User]\n{content[:RLM_CAPTURE_MAX_CHARS]}",
-                    metadata={"truncated": len(content) > RLM_CAPTURE_MAX_CHARS}
+                    f"[User]\n{content[:cap_max]}",
+                    metadata={"truncated": len(content) > cap_max}
                 )
                 captured += 1
     
@@ -733,11 +762,11 @@ async def _stream_with_tools(
             yield f"data: {json.dumps(data)}\n\n"
             
             # Capture thinking into RLM context (opencode strips these from message history)
-            if full_reasoning and len(full_reasoning) >= RLM_CAPTURE_MIN_CHARS:
-                session_manager.append(session_id, "thinking", f"[Thinking]\n{full_reasoning[:RLM_CAPTURE_MAX_CHARS]}")
+            if full_reasoning and len(full_reasoning) >= get_setting("rlm_capture_min_chars"):
+                session_manager.append(session_id, "thinking", f"[Thinking]\n{full_reasoning[:get_setting('rlm_capture_max_chars')]}")
             # Capture assistant response immediately (not on next request)
-            if full_content and len(full_content) > RLM_ASSISTANT_MIN_CHARS:
-                session_manager.append(session_id, "assistant_response", f"[Assistant]\n{full_content[:RLM_CAPTURE_MAX_CHARS]}")
+            if full_content and len(full_content) > get_setting("rlm_assistant_min_chars"):
+                session_manager.append(session_id, "assistant_response", f"[Assistant]\n{full_content[:get_setting('rlm_capture_max_chars')]}")
             
             console.print(f"[green][_stream] Complete (iter {iteration+1}): {len(full_content)} chars, {len(non_rlm_tool_calls)} tool calls[/green]")
             await dashboard_mgr.broadcast("stream_end", {"iteration": iteration + 1})
@@ -762,12 +791,15 @@ async def _stream_with_tools(
             except json.JSONDecodeError:
                 args = {}
             
+            summarizer_model = get_setting("rlm_summarize_model")
+            summarizer_model = summarizer_model or model_id
+            
             result = await execute_context_tool(
                 tool_name, args, context,
                 session_stats=session_stats,
                 session_entries=session_entries,
                 provider=provider,
-                summarize_model_id=RLM_SUMMARIZE_MODEL or model_id,
+                summarize_model_id=summarizer_model,
                 session_id=session_id,
             )
             
@@ -778,12 +810,11 @@ async def _stream_with_tools(
             
             # Capture the rlm tool invocation into context
             summary = format_tool_result_for_message(result)
-            session_manager.append(
-                session_id,
-                "rlm_tool",
-                f"[{tool_name}]\nQuery: {json.dumps(args)}\nResult: {summary}\n{result_text[:RLM_CAPTURE_MAX_CHARS]}",
-                metadata={"tool": tool_name}
+            result_text_for_capture = summary if tool_name == "rlm_summarize" else result.result.get("text", "")
+            result_formatted = (
+                f"[{tool_name}]\nQuery: {json.dumps(args)}\nResult: {summary}\n{result_text_for_capture[:get_setting('rlm_capture_max_chars')]}"
             )
+            session_manager.append(session_id, "tool_output", result_formatted, metadata={"tool": tool_name})
             
             current_messages.append({
                 "role": "tool",
