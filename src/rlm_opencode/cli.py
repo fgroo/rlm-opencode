@@ -70,7 +70,7 @@ def serve(
     if background:
         import subprocess
         proc = subprocess.Popen(
-            [sys.executable, "-m", "rlm_opencode.cli", "serve", "--port", str(port), "--host", host],
+            [sys.executable, "-u", "-m", "rlm_opencode.cli", "serve", "--port", str(port), "--host", host],
             stdout=open(LOG_FILE, "w"),
             stderr=subprocess.STDOUT,
             start_new_session=True,
@@ -151,7 +151,7 @@ def restart(
     
     console.print(f"[dim]Starting server on {host}:{port}...[/dim]")
     proc = subprocess.Popen(
-        [sys.executable, "-m", "rlm_opencode.cli", "serve", "--port", str(port), "--host", host],
+        [sys.executable, "-u", "-m", "rlm_opencode.cli", "serve", "--port", str(port), "--host", host],
         stdout=open(LOG_FILE, "w"),
         stderr=subprocess.STDOUT,
         start_new_session=True,

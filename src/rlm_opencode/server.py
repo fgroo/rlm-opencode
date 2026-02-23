@@ -662,6 +662,7 @@ async def _stream_with_tools(
                 "error": {"message": str(e), "type": "stream_error"}
             }
             yield f"data: {json.dumps(error_data)}\n\n"
+            yield "data: [DONE]\n\n"
             return
         
         full_content = "".join(collected_content)
