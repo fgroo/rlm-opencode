@@ -78,12 +78,12 @@ class OpenAICompatibleProvider(BaseProvider):
                     ) as response:
                         print(f"[OpenAICompat] Response status: {response.status_code}", file=sys.stderr, flush=True)
                         
-                        if response.status_code >= 500:
+                        if response.status_code >= 500 or response.status_code == 429:
                             error_text = await response.aread()
                             error_msg = f"API error {response.status_code}: {error_text.decode()}"
                             if attempt < max_retries - 1:
                                 wait_time = base_backoff * (2 ** attempt)
-                                print(f"[OpenAICompat] Transient 5xx error ({response.status_code}). Retrying in {wait_time}s... (Attempt {attempt+1}/{max_retries})", file=sys.stderr, flush=True)
+                                print(f"[OpenAICompat] Transient error ({response.status_code}). Retrying in {wait_time}s... (Attempt {attempt+1}/{max_retries})", file=sys.stderr, flush=True)
                                 await asyncio.sleep(wait_time)
                                 continue
                             else:
