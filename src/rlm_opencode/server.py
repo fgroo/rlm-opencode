@@ -230,12 +230,17 @@ def _fingerprint_messages(messages: list) -> str:
         content = msg.content if hasattr(msg, 'content') else msg.get('content', '')
         if role == "user" and content:
             text = _extract_text(content)
-            if not text:
-                continue
+            
             # Skip title-generation requests (opencode internal)
-            if text.lower().startswith(_TITLE_PREFIXES):
+            if text and text.lower().startswith(_TITLE_PREFIXES):
                 continue
-            return hashlib.sha256(text.encode()).hexdigest()[:16]
+                
+            # If there's no text (e.g., pure image prompt), hash the raw content structure
+            hash_target = text if text else str(content)
+            
+            if hash_target:
+                return hashlib.sha256(hash_target.encode()).hexdigest()[:16]
+                
     return ""
 
 
@@ -776,16 +781,14 @@ async def _stream_with_tools(
                 "content": result_text,
             })
         
-        # Also add non-rlm tool results as empty (opencode will handle them)
-        # Actually, if there are non-rlm tool calls mixed with rlm ones,
-        # we need to handle them: pass the rlm results back to the model
-        # and let it continue. Non-rlm tool calls shouldn't happen in the
-        # same turn, but if they do, add dummy results.
+        # If there are non-rlm tool calls mixed with rlm ones,
+        # we CANNOT stream them to opencode right now because we are looping back internally.
+        # We must tell the LLM that they failed and force it to reissue them.
         for tc in non_rlm_tool_calls:
             current_messages.append({
                 "role": "tool",
                 "tool_call_id": tc["id"],
-                "content": "[Pending: this tool will be executed by the host agent]",
+                "content": "ERROR: You mixed rlm_ tools and external tools. The external tools were NOT executed. Please re-issue your external tool calls in your next turn.",
             })
     
     # Max iterations reached

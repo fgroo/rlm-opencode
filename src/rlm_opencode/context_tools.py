@@ -234,12 +234,13 @@ async def execute_context_tool(
         elif tool_name == "rlm_forget":
             from rlm_opencode.session import session_manager
             
-            offset = arguments.get("offset")
-            length = arguments.get("length")
+            try:
+                offset = int(arguments.get("offset"))
+                length = int(arguments.get("length"))
+            except (ValueError, TypeError):
+                raise ValueError("Both offset and length are required and must be integers for rlm_forget")
+
             reason = arguments.get("reason", "No reason provided")
-            
-            if offset is None or length is None:
-                raise ValueError("Both offset and length are required for rlm_forget")
                 
             if not session_id:
                 raise ValueError("Session ID is required to use rlm_forget")
@@ -279,8 +280,11 @@ async def execute_context_tool(
 
 def _tool_get_context(context: str, args: dict) -> ContextToolResult:
     """Get a chunk of context."""
-    offset = max(0, args.get("offset", 0))
-    length = min(50000, max(1, args.get("length", 10000)))
+    try:
+        offset = max(0, int(args.get("offset", 0)))
+        length = min(50000, max(1, int(args.get("length", 10000))))
+    except (ValueError, TypeError):
+        offset, length = 0, 10000
     
     if offset >= len(context):
         return ContextToolResult(
@@ -316,8 +320,12 @@ async def _tool_summarize(context: str, args: dict, provider: Any, model_id: str
             error="Summarization provider/model not configured."
         )
 
-    offset = max(0, args.get("offset", 0))
-    length = min(100000, max(1, args.get("length", 50000)))
+    try:
+        offset = max(0, int(args.get("offset", 0)))
+        length = min(100000, max(1, int(args.get("length", 50000))))
+    except (ValueError, TypeError):
+        offset, length = 0, 50000
+        
     focus = args.get("focus", "")
     
     if offset >= len(context):
@@ -375,8 +383,11 @@ async def _tool_summarize(context: str, args: dict, provider: Any, model_id: str
 def _tool_search(context: str, args: dict) -> ContextToolResult:
     """Search context with regex."""
     pattern = args.get("pattern", "")
-    max_results = min(200, max(1, args.get("max_results", 50)))
-    context_lines = max(0, args.get("context_lines", 2))
+    try:
+        max_results = min(200, max(1, int(args.get("max_results", 50))))
+        context_lines = max(0, int(args.get("context_lines", 2)))
+    except (ValueError, TypeError):
+        max_results, context_lines = 50, 2
     
     if not pattern:
         return ContextToolResult(
@@ -433,7 +444,10 @@ def _tool_search(context: str, args: dict) -> ContextToolResult:
 def _tool_find(context: str, args: dict) -> ContextToolResult:
     """Find exact text occurrences."""
     text = args.get("text", "")
-    max_results = min(500, max(1, args.get("max_results", 100)))
+    try:
+        max_results = min(500, max(1, int(args.get("max_results", 100))))
+    except (ValueError, TypeError):
+        max_results = 100
     
     if not text:
         return ContextToolResult(
@@ -500,7 +514,10 @@ def _tool_stats(context: str, stats: dict | None) -> ContextToolResult:
 def _tool_get_entries(entries: list[dict], args: dict) -> ContextToolResult:
     """Get context entry information."""
     entry_type = args.get("entry_type", "all")
-    limit = min(100, max(1, args.get("limit", 20)))
+    try:
+        limit = min(100, max(1, int(args.get("limit", 20))))
+    except (ValueError, TypeError):
+        limit = 20
     
     filtered = entries
     if entry_type != "all":
