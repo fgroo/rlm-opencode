@@ -101,41 +101,41 @@ class OpenAICompatibleProvider(BaseProvider):
                             line_count += 1
                             if not line:
                                 continue
-                    
-                    if line.startswith("data: "):
-                        data_str = line[6:]
+                            
+                            if line.startswith("data: "):
+                                data_str = line[6:]
+                                
+                                if data_str == "[DONE]":
+                                    print(f"[OpenAICompat] Stream done: {line_count} lines, {chunk_count} chunks", file=sys.stderr, flush=True)
+                                    return
+                                
+                                try:
+                                    data = json.loads(data_str)
+                                except json.JSONDecodeError:
+                                    continue
+                                
+                                choices = data.get("choices", [])
+                                if not choices:
+                                    continue
+                                
+                                delta = choices[0].get("delta", {})
+                                finish_reason = choices[0].get("finish_reason")
+                                
+                                content = delta.get("content", "")
+                                tool_calls = delta.get("tool_calls")
+                                reasoning = delta.get("reasoning_content", "") or delta.get("reasoning", "")
+                                
+                                if content or tool_calls or finish_reason or reasoning:
+                                    chunk_count += 1
+                                    yield StreamChunk(
+                                        content=content,
+                                        finish_reason=finish_reason,
+                                        tool_calls=tool_calls,
+                                        reasoning=reasoning,
+                                    )
                         
-                        if data_str == "[DONE]":
-                            print(f"[OpenAICompat] Stream done: {line_count} lines, {chunk_count} chunks", file=sys.stderr, flush=True)
-                            return
-                        
-                        try:
-                            data = json.loads(data_str)
-                        except json.JSONDecodeError:
-                            continue
-                        
-                        choices = data.get("choices", [])
-                        if not choices:
-                            continue
-                        
-                        delta = choices[0].get("delta", {})
-                        finish_reason = choices[0].get("finish_reason")
-                        
-                        content = delta.get("content", "")
-                        tool_calls = delta.get("tool_calls")
-                        reasoning = delta.get("reasoning_content", "") or delta.get("reasoning", "")
-                        
-                        if content or tool_calls or finish_reason or reasoning:
-                            chunk_count += 1
-                            yield StreamChunk(
-                                content=content,
-                                finish_reason=finish_reason,
-                                tool_calls=tool_calls,
-                                reasoning=reasoning,
-                            )
-                
-                    print(f"[OpenAICompat] Stream ended: {line_count} lines, {chunk_count} chunks", file=sys.stderr, flush=True)
-                    return # Subroutine complete safely without exception.
+                        print(f"[OpenAICompat] Stream ended: {line_count} lines, {chunk_count} chunks", file=sys.stderr, flush=True)
+                        return # Subroutine complete safely without exception.
             except httpx.RequestError as e:
                 # Catch network level issues: ReadTimeout, ConnectTimeout, NetworkError
                 if attempt < max_retries - 1:
