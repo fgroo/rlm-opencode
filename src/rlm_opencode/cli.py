@@ -375,7 +375,7 @@ def unjoin(
 
 
 @app.command()
-def log(
+def server_logs(
     follow: bool = typer.Option(False, "--follow", "-f", help="Follow log output (tail -f)"),
     full: bool = typer.Option(False, "--full", help="Show entire log"),
     lines: int = typer.Option(50, "--lines", "-n", help="Number of lines to show"),
@@ -383,10 +383,8 @@ def log(
     """View RLM-OpenCode server log.
     
     Examples:
-        rlm-opencode log              # Last 50 lines
-        rlm-opencode log -f           # Follow mode (live updates)
-        rlm-opencode log --full       # Entire log
-        rlm-opencode log -n 100       # Last 100 lines
+        rlm-opencode server-logs              # Last 50 lines
+        rlm-opencode server-logs -f           # Follow mode (live updates)
     """
     if not os.path.exists(LOG_FILE):
         console.print(f"[yellow]Log file not found: {LOG_FILE}[/yellow]")
@@ -403,6 +401,63 @@ def log(
         with open(LOG_FILE) as f:
             all_lines = f.readlines()[-lines:]
             console.print("".join(all_lines))
+
+
+@app.command()
+def log():
+    """View the visual session tree (Git for Agent Memory).
+    
+    Displays a hierarchical representation of all sessions and their branches.
+    """
+    from rlm_opencode.session import session_manager
+    from rich.tree import Tree
+    
+    roots = session_manager.build_session_tree()
+    
+    if not roots:
+        console.print("[dim]No sessions found in the memory lake.[/dim]")
+        return
+        
+    def _format_node(session) -> str:
+        # Determine color and activity
+        color = "cyan" if session.opencode_session_id else "dim"
+        active_tag = " [bold green]★ ACTIVE[/bold green]" if session.opencode_session_id else ""
+        
+        # Format timestamps
+        created = time.strftime("%b %d %H:%M", time.localtime(session.created))
+        
+        # Formatting context size
+        chars = session.stats.total_chars if session.stats else 0
+        if chars > 1_000_000:
+            size_str = f"{chars / 1_000_000:.1f}MB"
+        elif chars > 1_000:
+            size_str = f"{chars / 1_000:.1f}KB"
+        else:
+            size_str = f"{chars}B"
+            
+        entries = len(session.entries) if session.entries else 0
+        
+        return f"[{color}]{session.id}[/{color}] [dim]• {created} • {size_str} ({entries} turns)[/dim]{active_tag}"
+        
+    def _build_tree(node_dict: dict, tree: Tree):
+        # Sort children by creation time
+        children = dict(sorted(node_dict["children"].items(), key=lambda x: x[1]["session"].created))
+        
+        for child_id, child_node in children.items():
+            child_branch = tree.add(_format_node(child_node["session"]))
+            _build_tree(child_node, child_branch)
+            
+    # Main Forest rendering
+    console.print("\n[bold]🌳 RLM Session Memory Tree[/bold]\n")
+    
+    # Sort roots by creation time (newest last)
+    sorted_roots = sorted(roots.values(), key=lambda x: x["session"].created)
+    
+    for root_node in sorted_roots:
+        root_tree = Tree(_format_node(root_node["session"]))
+        _build_tree(root_node, root_tree)
+        console.print(root_tree)
+        console.print()
 
 
 @app.command()

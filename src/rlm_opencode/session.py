@@ -61,6 +61,7 @@ class Session:
     directory: str | None = None
     incognito: bool = False
     target_session_id: str | None = None
+    parent_session_id: str | None = None
     entries: list[ContextEntry] = field(default_factory=list)
     stats: SessionStats = field(default_factory=SessionStats)
     context_file: str = ""
@@ -73,6 +74,7 @@ class Session:
             "directory": self.directory,
             "incognito": self.incognito,
             "target_session_id": self.target_session_id,
+            "parent_session_id": self.parent_session_id,
             "context_file": self.context_file,
             "stats": {
                 "files_read": self.stats.files_read,
@@ -117,6 +119,7 @@ class Session:
             directory=data.get("directory"),
             incognito=data.get("incognito", False),
             target_session_id=data.get("target_session_id"),
+            parent_session_id=data.get("parent_session_id"),
             context_file=data.get("context_file", ""),
             entries=entries,
             stats=stats,
@@ -181,6 +184,7 @@ class SessionManager:
                     directory TEXT,
                     incognito INTEGER DEFAULT 0,
                     target_session_id TEXT,
+                    parent_session_id TEXT,
                     context_file TEXT,
                     stats_json TEXT,
                     UNIQUE(opencode_session_id)
@@ -205,6 +209,12 @@ class SessionManager:
             # Migration to add target_session_id for existing DBs
             try:
                 conn.execute("ALTER TABLE sessions ADD COLUMN target_session_id TEXT")
+            except sqlite3.OperationalError:
+                pass
+                
+            # Migration to add parent_session_id
+            try:
+                conn.execute("ALTER TABLE sessions ADD COLUMN parent_session_id TEXT")
             except sqlite3.OperationalError:
                 pass
 
@@ -617,6 +627,9 @@ class SessionManager:
             
         # Create new branch
         session = self.create_session()
+        session.parent_session_id = source.id
+        self._save_session(session)
+        
         from rich.progress import track
         
         for chunk in track(chunks, description=f"Branching session...", transient=True):
@@ -634,6 +647,25 @@ class SessionManager:
             self.append(session.id, entry_type, chunk)
             
         return session
+    
+    def build_session_tree(self) -> dict[str, dict]:
+        """Reconstruct the hierarchy of session branches.
+        
+        Returns a dict of root sessions mapped to dictionaries representing their child trees.
+        """
+        sessions = self.list_sessions(include_incognito=False)
+        session_map = {s.id: {"session": s, "children": {}} for s in sessions}
+        
+        roots = {}
+        for s in sessions:
+            parent_id = s.parent_session_id
+            if parent_id and parent_id in session_map:
+                session_map[parent_id]["children"][s.id] = session_map[s.id]
+            else:
+                # Root branch or orphaned branch whose parent was deleted
+                roots[s.id] = session_map[s.id]
+                
+        return roots
     
     def delete_session(self, session_id: str) -> bool:
         """Delete a session."""
@@ -695,14 +727,16 @@ class SessionManager:
         with self._get_db() as conn:
             conn.execute("""
                 INSERT OR REPLACE INTO sessions 
-                (id, created, opencode_session_id, directory, incognito, context_file, stats_json)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                (id, created, opencode_session_id, directory, incognito, target_session_id, parent_session_id, context_file, stats_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 session.id,
                 session.created,
                 session.opencode_session_id,
                 session.directory,
                 1 if session.incognito else 0,
+                session.target_session_id,
+                session.parent_session_id,
                 session.context_file,
                 json.dumps(session.stats.__dict__),
             ))
@@ -758,6 +792,8 @@ class SessionManager:
             opencode_session_id=row["opencode_session_id"],
             directory=row["directory"],
             incognito=bool(row["incognito"]),
+            target_session_id=row["target_session_id"] if "target_session_id" in row.keys() else None,
+            parent_session_id=row["parent_session_id"] if "parent_session_id" in row.keys() else None,
             context_file=row["context_file"],
             stats=SessionStats(
                 files_read=stats_data.get("files_read", 0),
