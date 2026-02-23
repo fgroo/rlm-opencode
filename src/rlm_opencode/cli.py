@@ -304,13 +304,32 @@ def config(
             console.print(f"[dim]Key '{key}' not set in config.[/dim]")
         return
         
-    try:
-        parsed_val = int(value)
-    except ValueError:
-        if value.lower() in ["true", "false"]:
-            parsed_val = value.lower() == "true"
+    if value.lower() == "default":
+        if key in cfg:
+            cfg.pop(key)
+            session_manager._save_config(cfg)
+            console.print(f"[green]Restored to default:[/green] {key}")
+            console.print("[dim]Restart the server for changes to take full effect.[/dim]")
         else:
-            parsed_val = value
+            console.print(f"[dim]'{key}' is already at its default/env value.[/dim]")
+        return
+        
+    if key != "rlm_summarize_model":
+        try:
+            parsed_val = int(value)
+            if parsed_val < 0:
+                console.print(f"[red]Error:[/red] '{key}' must be a positive integer.")
+                raise typer.Exit(1)
+        except ValueError:
+            console.print(f"[red]Error:[/red] '{key}' must be a positive integer.")
+            raise typer.Exit(1)
+            
+        if key == "strict_mode_level" and not (0 <= parsed_val <= 4):
+            console.print(f"[red]Error:[/red] '{key}' must be between 0 and 4.")
+            raise typer.Exit(1)
+    else:
+        # rlm_summarize_model can be a string, or None (if passed "None", maybe clear it, but "default" handles clearing)
+        parsed_val = value if value.lower() != "none" else None
             
     if key not in RLM_DEFAULT_SETTINGS and key != "strict_mode_level":
         console.print(f"[yellow]Warning: '{key}' is not a recognized configuration setting.[/yellow]")
