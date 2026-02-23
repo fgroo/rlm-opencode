@@ -256,16 +256,32 @@ def config(
     key: str = typer.Argument(None, help="Config key to set or view"),
     value: str = typer.Argument(None, help="Value to set"),
 ):
-    """View or set persistent configuration variables (e.g. max_payload_chars)."""
+    """View or set persistent configuration variables (e.g. rlm_max_payload_chars)."""
     from rlm_opencode.session import session_manager
+    from rlm_opencode.server import RLM_DEFAULT_SETTINGS, get_setting
+    
     cfg = session_manager.get_config()
     
     if key is None:
-        console.print("[bold]Current Configuration:[/bold]")
-        for k, v in cfg.items():
-            console.print(f"  {k}: [cyan]{v}[/cyan]")
-        if not cfg:
-            console.print("  [dim]No configuration set.[/dim]")
+        console.print("[bold]Current Active Configuration:[/bold]")
+        console.print("[dim](Priority: JSON > ENV > Default)[/dim]")
+        
+        # Always show strict mode
+        strict_val = cfg.get("strict_mode_level", 0)
+        source = "[yellow](custom JSON)[/yellow]" if "strict_mode_level" in cfg else "[dim](default)[/dim]"
+        console.print(f"  strict_mode_level: [cyan]{strict_val}[/cyan] {source}")
+        
+        # Iterating over all known default keys to build a comprehensive list
+        for default_key in RLM_DEFAULT_SETTINGS.keys():
+            val = get_setting(default_key)
+            if default_key in cfg:
+                source = "[yellow](custom JSON)[/yellow]"
+            elif default_key.upper() in os.environ:
+                source = "[blue](from ENV)[/blue]"
+            else:
+                source = "[dim](default)[/dim]"
+            
+            console.print(f"  {default_key}: [cyan]{val}[/cyan] {source}")
         return
         
     if value is None:

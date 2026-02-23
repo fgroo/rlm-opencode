@@ -86,7 +86,7 @@ class ChatCompletionResponse(BaseModel):
 # Configurable thresholds (env vars)
 import os
 # Default configurations
-DEFAULT_SETTINGS = {
+RLM_DEFAULT_SETTINGS = {
     "rlm_capture_min_chars": 500,
     "rlm_capture_max_chars": 50000,
     "rlm_user_min_chars": 0,
@@ -113,7 +113,7 @@ def get_setting(key: str) -> any:
         return int(val)
         
     # 3. Default
-    return DEFAULT_SETTINGS.get(key)
+    return RLM_DEFAULT_SETTINGS.get(key)
 
 def estimate_tokens(text: str) -> int:
     """Rough token estimate: ~4 chars per token."""
