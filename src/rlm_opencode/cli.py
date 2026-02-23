@@ -287,6 +287,13 @@ def config(
             console.print(f"\n  [bold]{default_key}[/bold]: [cyan]{val}[/cyan] {source}")
             console.print(f"    [dim italic]↳ {desc}[/dim italic]")
             
+        # Check for unrecognized keys
+        unknown_keys = [k for k in cfg.keys() if k not in RLM_DEFAULT_SETTINGS and k != "strict_mode_level"]
+        if unknown_keys:
+            console.print("\n[yellow]Unrecognized Custom Keys:[/yellow]")
+            for k in unknown_keys:
+                console.print(f"  [bold]{k}[/bold]: [red]{cfg[k]}[/red] [dim](unknown)[/dim]")
+            
         console.print()
         return
         
@@ -304,6 +311,9 @@ def config(
             parsed_val = value.lower() == "true"
         else:
             parsed_val = value
+            
+    if key not in RLM_DEFAULT_SETTINGS and key != "strict_mode_level":
+        console.print(f"[yellow]Warning: '{key}' is not a recognized configuration setting.[/yellow]")
             
     cfg[key] = parsed_val
     session_manager._save_config(cfg)
