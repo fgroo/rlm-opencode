@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "rlm-opencode"
-version = "0.1.0"
+version = "0.1.5"
 description = "True RLM implementation with tool-based context access for OpenCode"
 readme = "README.md"
 requires-python = ">=3.11"
