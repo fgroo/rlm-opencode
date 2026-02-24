@@ -140,16 +140,23 @@ opencode -m rlm-opencode/your_provider.your_model
 
 ## Configuration
 
-All thresholds are configurable via environment variables:
+All thresholds are dynamically configurable via the built-in CLI config tool (which saves to a persistent JSON store) or via environment variables (which act as fallbacks).
 
-| Env Var | Default | Description |
-|---------|---------|-------------|
-| `RLM_UPSTREAM_MAX_TOKENS` | 128,000 | Upstream model's real context window |
-| `RLM_TOKEN_RESERVE` | 16,000 | Reserved tokens for response + tools |
-| `RLM_CAPTURE_MIN_CHARS` | 500 | Min chars to capture tool results |
-| `RLM_USER_MIN_CHARS` | 0 | Min chars to capture user messages (0 = all) |
-| `RLM_ASSISTANT_MIN_CHARS` | 50 | Min chars to capture assistant responses |
-| `RLM_CAPTURE_MAX_CHARS` | 50,000 | Max chars per context entry |
+```bash
+rlm-opencode config rlm_max_payload_chars 75000
+```
+
+| Config Key / Env Var | Default | Description |
+|----------------------|---------|-------------|
+| `strict_mode_level` | 0 | [0-4] Forces LLM to rely on tools (4 = Maximum Amnesia) |
+| `rlm_upstream_max_tokens` | 128,000 | The raw token limit of the underlying LLM's architecture |
+| `rlm_token_reserve` | 16,000 | Budget reserved for the model's generation output and tool responses |
+| `rlm_max_payload_chars` | 250,000 | Absolute size limit of the immediate workspace injected natively |
+| `rlm_capture_min_chars` | 500 | Min chars for a tool result to be saved into context (0 = all) |
+| `rlm_capture_max_chars` | 50,000 | Max chars per single entry in the context lake before truncation |
+| `rlm_user_min_chars` | 0 | Min chars for a user message to be captured (0 = all) |
+| `rlm_assistant_min_chars` | 50 | Min chars for an assistant response to be captured |
+| `rlm_summarize_model` | None | Specific model override for rlm_summarize tool calls |
 
 ## CLI Commands
 
@@ -158,9 +165,11 @@ rlm-opencode serve          # Start server (foreground)
 rlm-opencode serve --bg     # Start in background
 rlm-opencode stop           # Stop the server
 rlm-opencode restart        # Stop → reinstall → restart
+rlm-opencode config         # View or set persistent settings
+rlm-opencode branch         # Branch, backup, restore, or transfer session memory
+rlm-opencode log [-f]       # View visually rendered session history tree (or follow logs)
 rlm-opencode sessions       # List sessions with context stats
-rlm-opencode status         # Server status + env config
-rlm-opencode log -f         # Follow server log
+rlm-opencode status         # Server status + active configuration
 rlm-opencode clear --all    # Clear all sessions and logs
 ```
 

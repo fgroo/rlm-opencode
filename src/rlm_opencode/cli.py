@@ -70,7 +70,7 @@ def serve(
     if background:
         import subprocess
         proc = subprocess.Popen(
-            [sys.executable, "-m", "rlm_opencode.cli", "serve", "--port", str(port), "--host", host],
+            [sys.executable, "-u", "-m", "rlm_opencode.cli", "serve", "--port", str(port), "--host", host],
             stdout=open(LOG_FILE, "w"),
             stderr=subprocess.STDOUT,
             start_new_session=True,
@@ -151,7 +151,7 @@ def restart(
     
     console.print(f"[dim]Starting server on {host}:{port}...[/dim]")
     proc = subprocess.Popen(
-        [sys.executable, "-m", "rlm_opencode.cli", "serve", "--port", str(port), "--host", host],
+        [sys.executable, "-u", "-m", "rlm_opencode.cli", "serve", "--port", str(port), "--host", host],
         stdout=open(LOG_FILE, "w"),
         stderr=subprocess.STDOUT,
         start_new_session=True,
@@ -193,6 +193,7 @@ def status():
     env_vars = [
         ("RLM_UPSTREAM_MAX_TOKENS", "128000"),
         ("RLM_TOKEN_RESERVE", "16000"),
+        ("RLM_MAX_PAYLOAD_CHARS", "250000"),
         ("RLM_CAPTURE_MIN_CHARS", "500"),
         ("RLM_USER_MIN_CHARS", "0"),
         ("RLM_ASSISTANT_MIN_CHARS", "50"),
@@ -203,6 +204,140 @@ def status():
         is_custom = os.environ.get(var) is not None
         marker = " [cyan](custom)[/cyan]" if is_custom else ""
         console.print(f"  {var}={val}{marker}")
+
+    cfg = session_manager.get_config()
+    console.print()
+    console.print("[dim]Config (Persistent json config):[/dim]")
+    if not cfg:
+        console.print("  [dim]No persistent config set.[/dim]")
+    for k, v in cfg.items():
+        console.print(f"  {k} = [cyan]{v}[/cyan]")
+
+
+@app.command()
+def strict(
+    level: int = typer.Argument(None, help="Strict mode level (0-4)"),
+):
+    """View or set the Strict Mode level (0 = Off, 4 = Maximum).
+    
+    Strict Mode forces the LLM to use tools instead of guessing when
+    history is truncated. Standard is 0.
+    """
+    from rlm_opencode.session import session_manager
+    
+    if level is None:
+        current = session_manager.get_config().get("strict_mode_level", 0)
+        console.print(f"Current Strict Mode level: [cyan]{current}[/cyan]")
+        console.print("[dim]Use 'rlm-opencode strict <0-4>' to change it.[/dim]")
+        return
+        
+    if not 0 <= level <= 4:
+        console.print("[red]Error:[/red] Strict mode level must be between 0 and 4.")
+        raise typer.Exit(1)
+        
+    session_manager.set_strict_mode(level)
+    
+    colors = {
+        0: "dim",
+        1: "blue",
+        2: "magenta",
+        3: "red",
+        4: "bold red blink"
+    }
+    style = colors[level]
+    
+    console.print(f"Strict Mode updated to: [{style}]Level {level}[/{style}]")
+    if level > 0:
+        console.print("The RLM server will now aggressively instruct the model to use context tools.")
+
+
+@app.command()
+def config(
+    key: str = typer.Argument(None, help="Config key to set or view"),
+    value: str = typer.Argument(None, help="Value to set"),
+):
+    """View or set persistent configuration variables (e.g. rlm_max_payload_chars)."""
+    from rlm_opencode.session import session_manager
+    from rlm_opencode.server import RLM_DEFAULT_SETTINGS, RLM_SETTING_DESCRIPTIONS, get_setting
+    
+    cfg = session_manager.get_config()
+    
+    if key is None:
+        console.print("[bold]Current Active Configuration:[/bold]")
+        console.print("[dim](Priority: JSON > ENV > Default)[/dim]\n")
+        
+        # Always show strict mode
+        strict_val = cfg.get("strict_mode_level", 0)
+        source = "[yellow](custom JSON)[/yellow]" if "strict_mode_level" in cfg else "[dim](default)[/dim]"
+        desc = RLM_SETTING_DESCRIPTIONS.get("strict_mode_level", "")
+        console.print(f"  [bold]strict_mode_level[/bold]: [cyan]{strict_val}[/cyan] {source}")
+        console.print(f"    [dim italic]↳ {desc}[/dim italic]")
+        
+        # Iterating over all known default keys to build a comprehensive list
+        for default_key in RLM_DEFAULT_SETTINGS.keys():
+            val = get_setting(default_key)
+            if default_key in cfg:
+                source = "[yellow](custom JSON)[/yellow]"
+            elif default_key.upper() in os.environ:
+                source = "[blue](from ENV)[/blue]"
+            else:
+                source = "[dim](default)[/dim]"
+            
+            desc = RLM_SETTING_DESCRIPTIONS.get(default_key, "")
+            console.print(f"\n  [bold]{default_key}[/bold]: [cyan]{val}[/cyan] {source}")
+            console.print(f"    [dim italic]↳ {desc}[/dim italic]")
+            
+        # Check for unrecognized keys
+        unknown_keys = [k for k in cfg.keys() if k not in RLM_DEFAULT_SETTINGS and k != "strict_mode_level"]
+        if unknown_keys:
+            console.print("\n[yellow]Unrecognized Custom Keys:[/yellow]")
+            for k in unknown_keys:
+                console.print(f"  [bold]{k}[/bold]: [red]{cfg[k]}[/red] [dim](unknown)[/dim]")
+            
+        console.print()
+        return
+        
+    if value is None:
+        if key in cfg:
+            console.print(f"{key}: [cyan]{cfg[key]}[/cyan]")
+        else:
+            console.print(f"[dim]Key '{key}' not set in config.[/dim]")
+        return
+        
+    if value.lower() == "default":
+        if key in cfg:
+            cfg.pop(key)
+            session_manager._save_config(cfg)
+            console.print(f"[green]Restored to default:[/green] {key}")
+            console.print("[dim]Restart the server for changes to take full effect.[/dim]")
+        else:
+            console.print(f"[dim]'{key}' is already at its default/env value.[/dim]")
+        return
+        
+    if key != "rlm_summarize_model":
+        try:
+            parsed_val = int(value)
+            if parsed_val < 0:
+                console.print(f"[red]Error:[/red] '{key}' must be a positive integer.")
+                raise typer.Exit(1)
+        except ValueError:
+            console.print(f"[red]Error:[/red] '{key}' must be a positive integer.")
+            raise typer.Exit(1)
+            
+        if key == "strict_mode_level" and not (0 <= parsed_val <= 4):
+            console.print(f"[red]Error:[/red] '{key}' must be between 0 and 4.")
+            raise typer.Exit(1)
+    else:
+        # rlm_summarize_model can be a string, or None (if passed "None", maybe clear it, but "default" handles clearing)
+        parsed_val = value if value.lower() != "none" else None
+            
+    if key not in RLM_DEFAULT_SETTINGS and key != "strict_mode_level":
+        console.print(f"[yellow]Warning: '{key}' is not a recognized configuration setting.[/yellow]")
+            
+    cfg[key] = parsed_val
+    session_manager._save_config(cfg)
+    console.print(f"[green]Set config:[/green] {key} = {parsed_val}")
+    console.print("[dim]Restart the server for changes to take full effect.[/dim]")
 
 
 @app.command()
@@ -238,12 +373,15 @@ def sessions():
         
         entry_count = len(session.entries) if session.entries else 0
         
-        # Context file path (shortened)
-        ctx_file = session.context_file
-        if ctx_file:
-            ctx_file = str(ctx_file).replace(str(Path.home()), "~")
+        # Context file path (shortened) or linked status
+        if session.target_session_id:
+            ctx_file = f"→ [cyan]{session.target_session_id}[/cyan]"
         else:
-            ctx_file = "—"
+            ctx_file = session.context_file
+            if ctx_file:
+                ctx_file = str(ctx_file).replace(str(Path.home()), "~")
+            else:
+                ctx_file = "—"
         
         table.add_row(
             session.id,
@@ -258,7 +396,83 @@ def sessions():
 
 
 @app.command()
-def log(
+def join(
+    target_session: str = typer.Argument(..., help="The ID of the master session with the context"),
+    session_to_redirect: str = typer.Argument(..., help="The ID of the session that will be redirected"),
+):
+    """Link a session to another session's context (Party Mode).
+    
+    Like dup2(), this redirects session_to_redirect's reads/writes to target_session.
+    Both agents will now share the exact same context!
+    """
+    from rlm_opencode.session import session_manager
+    
+    if session_manager.set_target_session(session_to_redirect, target_session):
+        console.print(f"[green]🎉 Party Mode Activated![/green]")
+        console.print(f"Session [cyan]{session_to_redirect}[/cyan] is now linked to [cyan]{target_session}[/cyan]")
+    else:
+        console.print(f"[red]Error:[/red] Could not find session {session_to_redirect}")
+
+
+@app.command(name="import")
+def import_ctx(
+    file_path: str = typer.Argument(..., help="Path to the raw context.txt file to import"),
+):
+    """Import a raw context.txt file from another machine into a new session."""
+    from rlm_opencode.session import session_manager
+    
+    try:
+        session = session_manager.import_context_file(file_path)
+        console.print(f"\n[bold green]Import Complete![/bold green]")
+        console.print(f"You can now link your active OpenCode chat to this imported session:")
+    except Exception as e:
+        console.print(f"[red]Error importing context:[/red] {e}")
+
+
+@app.command()
+def branch(
+    source_session_id: str = typer.Argument(..., help="The origin session ID to branch from"),
+    drop_last: int = typer.Option(0, "--drop-last", "-d", help="Number of recent context entries to permanently drop in the new branch"),
+):
+    """Clone an existing session, optionally dropping recent mistakes from memory.
+    
+    This is like Git for Agent Memory. If the agent goes down a huge rabbit hole
+    of failed debugging, you can branch the session from 10 turns ago, leaving
+    the garbage behind, and attach your active OpenCode chat to the clean branch.
+    """
+    from rlm_opencode.session import session_manager
+    
+    try:
+        new_session = session_manager.branch_session(source_session_id, drop_last)
+        console.print(f"\n[bold green]Branch Created Successfully![/bold green]")
+        console.print(f"Origin: [dim]{source_session_id}[/dim]")
+        if drop_last > 0:
+            console.print(f"Dropped: [red]last {drop_last} entries[/red]")
+            
+        console.print(f"\n🚀 New Clean Branch: [cyan]{new_session.id}[/cyan]")
+        console.print(f"To use this branch in your active OpenCode window, run:")
+        console.print(f"  [cyan]rlm-opencode join <your_active_chat_id> {new_session.id}[/cyan]")
+        
+    except Exception as e:
+        console.print(f"[red]Error branching session:[/red] {str(e)}")
+
+
+@app.command()
+def unjoin(
+    session_id: str = typer.Argument(..., help="The ID of the session to un-link"),
+):
+    """Remove a session link, restoring its private context."""
+    from rlm_opencode.session import session_manager
+    
+    if session_manager.set_target_session(session_id, None):
+        console.print(f"[yellow]Link removed.[/yellow]")
+        console.print(f"Session [cyan]{session_id}[/cyan] now has its own private context again.")
+    else:
+        console.print(f"[red]Error:[/red] Could not find session {session_id}")
+
+
+@app.command()
+def server_logs(
     follow: bool = typer.Option(False, "--follow", "-f", help="Follow log output (tail -f)"),
     full: bool = typer.Option(False, "--full", help="Show entire log"),
     lines: int = typer.Option(50, "--lines", "-n", help="Number of lines to show"),
@@ -266,10 +480,8 @@ def log(
     """View RLM-OpenCode server log.
     
     Examples:
-        rlm-opencode log              # Last 50 lines
-        rlm-opencode log -f           # Follow mode (live updates)
-        rlm-opencode log --full       # Entire log
-        rlm-opencode log -n 100       # Last 100 lines
+        rlm-opencode server-logs              # Last 50 lines
+        rlm-opencode server-logs -f           # Follow mode (live updates)
     """
     if not os.path.exists(LOG_FILE):
         console.print(f"[yellow]Log file not found: {LOG_FILE}[/yellow]")
@@ -286,6 +498,63 @@ def log(
         with open(LOG_FILE) as f:
             all_lines = f.readlines()[-lines:]
             console.print("".join(all_lines))
+
+
+@app.command()
+def log():
+    """View the visual session tree (Git for Agent Memory).
+    
+    Displays a hierarchical representation of all sessions and their branches.
+    """
+    from rlm_opencode.session import session_manager
+    from rich.tree import Tree
+    
+    roots = session_manager.build_session_tree()
+    
+    if not roots:
+        console.print("[dim]No sessions found in the memory lake.[/dim]")
+        return
+        
+    def _format_node(session) -> str:
+        # Determine color and activity
+        color = "cyan" if session.opencode_session_id else "dim"
+        active_tag = " [bold green]★ ACTIVE[/bold green]" if session.opencode_session_id else ""
+        
+        # Format timestamps
+        created = time.strftime("%b %d %H:%M", time.localtime(session.created))
+        
+        # Formatting context size
+        chars = session.stats.total_chars if session.stats else 0
+        if chars > 1_000_000:
+            size_str = f"{chars / 1_000_000:.1f}MB"
+        elif chars > 1_000:
+            size_str = f"{chars / 1_000:.1f}KB"
+        else:
+            size_str = f"{chars}B"
+            
+        entries = len(session.entries) if session.entries else 0
+        
+        return f"[{color}]{session.id}[/{color}] [dim]• {created} • {size_str} ({entries} turns)[/dim]{active_tag}"
+        
+    def _build_tree(node_dict: dict, tree: Tree):
+        # Sort children by creation time
+        children = dict(sorted(node_dict["children"].items(), key=lambda x: x[1]["session"].created))
+        
+        for child_id, child_node in children.items():
+            child_branch = tree.add(_format_node(child_node["session"]))
+            _build_tree(child_node, child_branch)
+            
+    # Main Forest rendering
+    console.print("\n[bold]🌳 RLM Session Memory Tree[/bold]\n")
+    
+    # Sort roots by creation time (newest last)
+    sorted_roots = sorted(roots.values(), key=lambda x: x["session"].created)
+    
+    for root_node in sorted_roots:
+        root_tree = Tree(_format_node(root_node["session"]))
+        _build_tree(root_node, root_tree)
+        console.print(root_tree)
+        console.print()
 
 
 @app.command()

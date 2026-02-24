@@ -15,9 +15,11 @@ import time
 from typing import AsyncGenerator
 from uuid import uuid4
 
-from fastapi import FastAPI, HTTPException, Header
+from pathlib import Path
+
+from fastapi import FastAPI, HTTPException, Header, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, HTMLResponse
 from pydantic import BaseModel, Field
 from rich.console import Console
 
@@ -83,13 +85,47 @@ class ChatCompletionResponse(BaseModel):
 
 # Configurable thresholds (env vars)
 import os
-RLM_CAPTURE_MIN_CHARS = int(os.environ.get("RLM_CAPTURE_MIN_CHARS", "500"))    # Min chars for tool results (0 = all)
-RLM_CAPTURE_MAX_CHARS = int(os.environ.get("RLM_CAPTURE_MAX_CHARS", "50000"))  # Max chars per entry
-RLM_USER_MIN_CHARS = int(os.environ.get("RLM_USER_MIN_CHARS", "0"))            # Min chars for user messages (0 = all)
-RLM_ASSISTANT_MIN_CHARS = int(os.environ.get("RLM_ASSISTANT_MIN_CHARS", "50")) # Min chars for assistant responses
-UPSTREAM_MAX_TOKENS = int(os.environ.get("RLM_UPSTREAM_MAX_TOKENS", "128000")) # Upstream model's real context window
-TOKEN_RESERVE = int(os.environ.get("RLM_TOKEN_RESERVE", "16000"))              # Reserve for response + tools
+# Default configurations
+RLM_DEFAULT_SETTINGS = {
+    "rlm_capture_min_chars": 500,
+    "rlm_capture_max_chars": 50000,
+    "rlm_user_min_chars": 0,
+    "rlm_assistant_min_chars": 50,
+    "rlm_upstream_max_tokens": 128000,
+    "rlm_token_reserve": 16000,
+    "rlm_max_payload_chars": 250000,
+    "rlm_summarize_model": None,
+}
 
+RLM_SETTING_DESCRIPTIONS = {
+    "strict_mode_level": "[0-4] Forces LLM to rely on tools (4 = Maximum Amnesia)",
+    "rlm_capture_min_chars": "Minimum characters for a tool result to be saved into the context lake (0 = all)",
+    "rlm_capture_max_chars": "Maximum characters allowed per single entry in the context lake before truncation",
+    "rlm_user_min_chars": "Minimum characters for a user message to be captured into the context lake (0 = all)",
+    "rlm_assistant_min_chars": "Minimum characters for an assistant response to be captured into the context lake",
+    "rlm_upstream_max_tokens": "The raw token limit of the underlying LLM's architecture",
+    "rlm_token_reserve": "Budget reserved for the model's generation output and tool responses",
+    "rlm_max_payload_chars": "Absolute size limit of the immediate workspace injected natively into the LLM prompt",
+    "rlm_summarize_model": "Optional specific model override used exclusively for rlm_summarize tool calls",
+}
+
+def get_setting(key: str) -> any:
+    """Get configuration with priority: Persistent JSON -> ENV var -> Default."""
+    # 1. Try persistent config
+    config = session_manager.get_config()
+    if key in config:
+        return config[key]
+    
+    # 2. Try ENV var
+    env_key = key.upper()
+    if env_key in os.environ:
+        val = os.environ[env_key]
+        if key == "rlm_summarize_model":
+            return val
+        return int(val)
+        
+    # 3. Default
+    return RLM_DEFAULT_SETTINGS.get(key)
 
 def estimate_tokens(text: str) -> int:
     """Rough token estimate: ~4 chars per token."""
@@ -111,8 +147,9 @@ def estimate_message_tokens(msg: dict) -> int:
 
 def truncate_messages(
     messages: list[dict],
-    max_tokens: int = UPSTREAM_MAX_TOKENS,
-    reserve: int = TOKEN_RESERVE,
+    max_tokens: int | None = None,
+    reserve: int | None = None,
+    max_chars: int | None = None,
 ) -> list[dict]:
     """Truncate messages to fit the upstream model's context window.
     
@@ -123,8 +160,15 @@ def truncate_messages(
     1. Always keep: system messages (RLM instructions)
     2. Always keep: last user message (current task)
     3. Fill remaining budget backwards from most recent messages
-    4. If messages were dropped, insert a truncation notice
+    4. Enforce an absolute character limit to avoid hidden API gateway 500 errors
     """
+    if max_tokens is None:
+        max_tokens = get_setting("rlm_upstream_max_tokens")
+    if reserve is None:
+        reserve = get_setting("rlm_token_reserve")
+    if max_chars is None:
+        max_chars = get_setting("rlm_max_payload_chars")
+        
     budget = max_tokens - reserve
     
     # Separate system messages and conversation messages
@@ -136,21 +180,29 @@ def truncate_messages(
     
     # Calculate system prompt cost
     system_cost = sum(estimate_message_tokens(m) for m in system_msgs)
-    remaining_budget = budget - system_cost
+    system_chars = sum(len(str(m.get("content", ""))) for m in system_msgs)
     
-    if remaining_budget <= 0:
+    remaining_budget = budget - system_cost
+    remaining_chars = max_chars - system_chars
+    
+    if remaining_budget <= 0 or remaining_chars <= 0:
         return system_msgs + conv_msgs[-2:]  # At least keep last exchange
     
-    # Fill backwards from most recent messages
+    # Keep adding recent messages until token/char budget is full
     kept_msgs = []
     total_tokens = 0
+    total_chars = 0
     
     for msg in reversed(conv_msgs):
         msg_tokens = estimate_message_tokens(msg)
-        if total_tokens + msg_tokens > remaining_budget:
+        msg_chars = len(str(msg.get("content", "")))
+        
+        if total_tokens + msg_tokens > remaining_budget or total_chars + msg_chars > remaining_chars:
             break
+            
         kept_msgs.insert(0, msg)
         total_tokens += msg_tokens
+        total_chars += msg_chars
     
     dropped_count = len(conv_msgs) - len(kept_msgs)
     
@@ -218,12 +270,17 @@ def _fingerprint_messages(messages: list) -> str:
         content = msg.content if hasattr(msg, 'content') else msg.get('content', '')
         if role == "user" and content:
             text = _extract_text(content)
-            if not text:
-                continue
+            
             # Skip title-generation requests (opencode internal)
-            if text.lower().startswith(_TITLE_PREFIXES):
+            if text and text.lower().startswith(_TITLE_PREFIXES):
                 continue
-            return hashlib.sha256(text.encode()).hexdigest()[:16]
+                
+            # If there's no text (e.g., pure image prompt), hash the raw content structure
+            hash_target = text if text else str(content)
+            
+            if hash_target:
+                return hashlib.sha256(hash_target.encode()).hexdigest()[:16]
+                
     return ""
 
 
@@ -287,12 +344,15 @@ def capture_content(messages: list[ChatMessage], session_id: str):
         if msg.role == "tool" and msg.content:
             tool_name = msg.name or tool_id_to_name.get(msg.tool_call_id or "", "") or "external_tool"
             content = _extract_text(msg.content)
-            if content.strip() and len(content) >= RLM_CAPTURE_MIN_CHARS:
+            # Truncate content if too huge to keep DB small
+            cap_min = get_setting("rlm_capture_min_chars")
+            cap_max = get_setting("rlm_capture_max_chars")
+            if content.strip() and len(content) >= cap_min:
                 session_manager.append(
-                    session_id, 
-                    "tool_result", 
-                    f"[Tool: {tool_name}]\n{content[:RLM_CAPTURE_MAX_CHARS]}",
-                    metadata={"tool": tool_name, "truncated": len(content) > RLM_CAPTURE_MAX_CHARS}
+                    session_id,
+                    "tool_output",
+                    f"[Tool: {tool_name}]\n{content[:cap_max]}",
+                    metadata={"tool": tool_name, "truncated": len(content) > cap_max}
                 )
                 captured += 1
         
@@ -305,12 +365,14 @@ def capture_content(messages: list[ChatMessage], session_id: str):
             # Skip title-generation requests
             if content.lower().startswith(_TITLE_PREFIXES):
                 continue
-            if content.strip() and len(content) >= RLM_USER_MIN_CHARS:
+            usr_min = get_setting("rlm_user_min_chars")
+            cap_max = get_setting("rlm_capture_max_chars")
+            if content.strip() and len(content) >= usr_min:
                 session_manager.append(
                     session_id,
                     "user_message",
-                    f"[User]\n{content[:RLM_CAPTURE_MAX_CHARS]}",
-                    metadata={"truncated": len(content) > RLM_CAPTURE_MAX_CHARS}
+                    f"[User]\n{content[:cap_max]}",
+                    metadata={"truncated": len(content) > cap_max}
                 )
                 captured += 1
     
@@ -337,7 +399,8 @@ You have access to accumulated context from this session:
 - **Tool Results Captured**: {stats.tool_outputs if stats else 0}
 
 Instead of seeing the full context, you have TOOLS to access it on-demand:
-- `rlm_get_context(offset, length)` - Get a chunk of context
+- `rlm_summarize(offset, length, focus)` - Get a dense summary of a huge chunk
+- `rlm_get_context(offset, length)` - Get an exact extract of context
 - `rlm_search(pattern, max_results)` - Search with regex
 - `rlm_find(text, max_results)` - Find exact text
 - `rlm_stats()` - Get context statistics
@@ -346,11 +409,37 @@ Instead of seeing the full context, you have TOOLS to access it on-demand:
 ## Strategy
 
 1. For SMALL contexts (<100K chars): You can read directly with rlm_get_context(0, 100000)
-2. For LARGE contexts: Use rlm_search() to find relevant sections, then rlm_get_context() to read them
+2. For LARGE contexts: 
+   - If you don't know the exact keywords to search for, use `rlm_summarize` to quickly skim huge sections.
+   - Once you find the right section, use `rlm_search` or `rlm_get_context` to read the exact details.
 3. Think about what you're looking for before searching - good patterns save tokens
 
-Remember: You DON'T need to read the entire context. Search first, then read relevant sections.
+Remember: You DON'T need to read the entire context. Summarize large chunks or search first, then read relevant sections.
 """
+
+    strict_level = session_manager.get_config().get("strict_mode_level", 0)
+    
+    if strict_level >= 1:
+        prompt += "\n## Strict Mode Guidance\n"
+        
+        if strict_level == 1:
+            prompt += "Note: Your visible conversation history has been truncated. Use your tools if you need older info.\n"
+        elif strict_level == 2:
+            prompt += "Do not guess past information. Use your tools to search the context lake.\n"
+        elif strict_level == 3:
+            prompt += """🚨 STRICT MODE 🚨
+Your visible conversation history has been heavily truncated. Older messages were deliberately deleted.
+If the user references ANY past code, decision, or file that is not in your immediate visible messages, you MUST use `rlm_summarize`, `rlm_search`, or `rlm_get_context` to find it.
+DO NOT GUESS. DO NOT SAY YOU DON'T KNOW. USE YOUR TOOLS FIRST.
+"""
+        elif strict_level >= 4:
+            prompt += """🚨 MAXIMUM STRICTNESS 🚨 
+When you are over 128k tokens, YOU SUFFER FROM MASSIVE AMNESIA. 
+Your visible messages are ONLY the last few turns. The vast majority of the project is hidden from you.
+You absolutely MUST use `rlm_summarize` and `rlm_search` repeatedly to understand the history, verify past tasks, and rebuild connections. 
+DO NOT TRUST YOUR PRE-TRAINING OR MEMORY. USE THE TOOLS.
+"""
+
     return prompt
 
 
@@ -359,13 +448,15 @@ def inject_tools(request: ChatCompletionRequest, session_id: str) -> tuple[list[
     messages = []
     
     rlm_system = build_rlm_system_prompt(session_id)
-    has_system = any(msg.role == "system" for msg in request.messages)
-    
-    if not has_system:
-        messages.append({"role": "system", "content": rlm_system})
+    system_injected = False
     
     for msg in request.messages:
         msg_dict = {"role": msg.role, "content": msg.content}
+        
+        if msg.role == "system" and not system_injected:
+            msg_dict["content"] = msg_dict["content"] + "\n\n" + rlm_system
+            system_injected = True
+            
         if msg.tool_calls:
             msg_dict["tool_calls"] = msg.tool_calls
         if msg.tool_call_id:
@@ -373,6 +464,9 @@ def inject_tools(request: ChatCompletionRequest, session_id: str) -> tuple[list[
         if msg.name:
             msg_dict["name"] = msg.name
         messages.append(msg_dict)
+        
+    if not system_injected:
+        messages.insert(0, {"role": "system", "content": rlm_system})
     
     # TRUNCATE: Per RLM paper Algorithm 1, only recent turns + metadata
     # go to the LLM. Full context is accessible via tools.
@@ -390,14 +484,56 @@ def inject_tools(request: ChatCompletionRequest, session_id: str) -> tuple[list[
     return messages, all_tools
 
 
+class DashboardManager:
+    def __init__(self):
+        self.active_connections: list[WebSocket] = []
+
+    async def connect(self, websocket: WebSocket):
+        await websocket.accept()
+        self.active_connections.append(websocket)
+
+    def disconnect(self, websocket: WebSocket):
+        if websocket in self.active_connections:
+            self.active_connections.remove(websocket)
+
+    async def broadcast(self, event_type: str, data: dict):
+        if not self.active_connections:
+            return
+        message = {"type": event_type, "data": data}
+        for connection in self.active_connections.copy():
+            try:
+                await connection.send_json(message)
+            except Exception:
+                pass
+
+dashboard_mgr = DashboardManager()
+
+
 @app.get("/")
 async def root():
-    return {"message": "RLM-OpenCode", "version": __version__, "mode": "true-rlm"}
+    dashboard_path = Path(__file__).parent / "dashboard.html"
+    if dashboard_path.exists():
+        content = dashboard_path.read_text()
+        strict_level = session_manager.get_config().get("strict_mode_level", 0)
+        content = content.replace("___STRICT_MODE_TEMPLATE___", str(strict_level))
+        return HTMLResponse(content=content, status_code=200)
+    return HTMLResponse(content="Dashboard not found", status_code=404)
+
+
+@app.websocket("/ws/dashboard")
+async def websocket_dashboard(websocket: WebSocket):
+    await dashboard_mgr.connect(websocket)
+    try:
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        dashboard_mgr.disconnect(websocket)
 
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "version": __version__, "mode": "true-rlm"}
+    strict_level = session_manager.get_config().get("strict_mode_level", 0)
+    return {"status": "ok", "version": __version__, "mode": "true-rlm", "strict_level": strict_level}
 
 
 @app.post("/v1/chat/completions")
@@ -521,6 +657,12 @@ async def _stream_with_tools(
     session_entries = [e.__dict__ if hasattr(e, '__dict__') else e for e in (session.entries if session else [])]
     session_stats = session.stats.__dict__ if session and session.stats else None
     
+    await dashboard_mgr.broadcast("stream_start", {
+        "session_id": session_id,
+        "model": model_id,
+        "context_chars": len(context) if context else 0,
+    })
+    
     current_messages = list(messages)
     max_iterations = 10  # Prevent infinite loops
     
@@ -570,6 +712,7 @@ async def _stream_with_tools(
                 "error": {"message": str(e), "type": "stream_error"}
             }
             yield f"data: {json.dumps(error_data)}\n\n"
+            yield "data: [DONE]\n\n"
             return
         
         full_content = "".join(collected_content)
@@ -631,13 +774,14 @@ async def _stream_with_tools(
             yield f"data: {json.dumps(data)}\n\n"
             
             # Capture thinking into RLM context (opencode strips these from message history)
-            if full_reasoning and len(full_reasoning) >= RLM_CAPTURE_MIN_CHARS:
-                session_manager.append(session_id, "thinking", f"[Thinking]\n{full_reasoning[:RLM_CAPTURE_MAX_CHARS]}")
+            if full_reasoning and len(full_reasoning) >= get_setting("rlm_capture_min_chars"):
+                session_manager.append(session_id, "thinking", f"[Thinking]\n{full_reasoning[:get_setting('rlm_capture_max_chars')]}")
             # Capture assistant response immediately (not on next request)
-            if full_content and len(full_content) > RLM_ASSISTANT_MIN_CHARS:
-                session_manager.append(session_id, "assistant_response", f"[Assistant]\n{full_content[:RLM_CAPTURE_MAX_CHARS]}")
+            if full_content and len(full_content) > get_setting("rlm_assistant_min_chars"):
+                session_manager.append(session_id, "assistant_response", f"[Assistant]\n{full_content[:get_setting('rlm_capture_max_chars')]}")
             
             console.print(f"[green][_stream] Complete (iter {iteration+1}): {len(full_content)} chars, {len(non_rlm_tool_calls)} tool calls[/green]")
+            await dashboard_mgr.broadcast("stream_end", {"iteration": iteration + 1})
             yield "data: [DONE]\n\n"
             return
         
@@ -659,23 +803,30 @@ async def _stream_with_tools(
             except json.JSONDecodeError:
                 args = {}
             
-            result = execute_context_tool(
+            summarizer_model = get_setting("rlm_summarize_model")
+            summarizer_model = summarizer_model or model_id
+            
+            result = await execute_context_tool(
                 tool_name, args, context,
                 session_stats=session_stats,
                 session_entries=session_entries,
+                provider=provider,
+                summarize_model_id=summarizer_model,
+                session_id=session_id,
             )
             
             result_text = json.dumps(result.result, indent=2) if result.success else f"Error: {result.error}"
             console.print(f"[dim]  {tool_name}({args}) → {len(result_text)} chars[/dim]")
             
+            await dashboard_mgr.broadcast("tool_call", {"tool_name": tool_name})
+            
             # Capture the rlm tool invocation into context
             summary = format_tool_result_for_message(result)
-            session_manager.append(
-                session_id,
-                "rlm_tool",
-                f"[{tool_name}]\nQuery: {json.dumps(args)}\nResult: {summary}\n{result_text[:RLM_CAPTURE_MAX_CHARS]}",
-                metadata={"tool": tool_name}
+            result_text_for_capture = summary if tool_name == "rlm_summarize" else result.result.get("text", "")
+            result_formatted = (
+                f"[{tool_name}]\nQuery: {json.dumps(args)}\nResult: {summary}\n{result_text_for_capture[:get_setting('rlm_capture_max_chars')]}"
             )
+            session_manager.append(session_id, "tool_output", result_formatted, metadata={"tool": tool_name})
             
             current_messages.append({
                 "role": "tool",
@@ -683,16 +834,14 @@ async def _stream_with_tools(
                 "content": result_text,
             })
         
-        # Also add non-rlm tool results as empty (opencode will handle them)
-        # Actually, if there are non-rlm tool calls mixed with rlm ones,
-        # we need to handle them: pass the rlm results back to the model
-        # and let it continue. Non-rlm tool calls shouldn't happen in the
-        # same turn, but if they do, add dummy results.
+        # If there are non-rlm tool calls mixed with rlm ones,
+        # we CANNOT stream them to opencode right now because we are looping back internally.
+        # We must tell the LLM that they failed and force it to reissue them.
         for tc in non_rlm_tool_calls:
             current_messages.append({
                 "role": "tool",
                 "tool_call_id": tc["id"],
-                "content": "[Pending: this tool will be executed by the host agent]",
+                "content": "ERROR: You mixed rlm_ tools and external tools. The external tools were NOT executed. Please re-issue your external tool calls in your next turn.",
             })
     
     # Max iterations reached
@@ -705,6 +854,7 @@ async def _stream_with_tools(
         "choices": [{"index": 0, "delta": {"content": "[RLM: Maximum tool iterations reached]"}, "finish_reason": "stop"}]
     }
     yield f"data: {json.dumps(data)}\n\n"
+    await dashboard_mgr.broadcast("stream_end", {"iteration": max_iterations})
     yield "data: [DONE]\n\n"
 
 

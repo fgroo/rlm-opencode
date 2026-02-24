@@ -133,16 +133,70 @@ def get_context_tools_definition() -> list[dict]:
                     }
                 }
             }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "rlm_summarize",
+                "description": "Read a large chunk of context and return a dense, bulleted summary. Use this to skim history when you don't know the exact keywords to search for.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "offset": {
+                            "type": "integer",
+                            "description": "Start position in context (default: 0)",
+                            "default": 0
+                        },
+                        "length": {
+                            "type": "integer",
+                            "description": "Number of characters to summarize (default: 50000, max: 100000)",
+                            "default": 50000
+                        },
+                        "focus": {
+                            "type": "string",
+                            "description": "Optional hint on what specifically to focus on in the summary"
+                        }
+                    }
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "rlm_forget",
+                "description": "Permanently delete/redact a block of irrelevant history from your long-term context (e.g., failed debugging sessions). Use this to clean your memory and improve search relevance.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "offset": {
+                            "type": "integer",
+                            "description": "Start position of the block to forget"
+                        },
+                        "length": {
+                            "type": "integer",
+                            "description": "Number of characters to forget"
+                        },
+                        "reason": {
+                            "type": "string",
+                            "description": "A concise reason for forgetting this context (e.g., 'Cleared 4 failed python tracebacks'). This will remain as a tombstone."
+                        }
+                    },
+                    "required": ["offset", "length", "reason"]
+                }
+            }
         }
     ]
 
 
-def execute_context_tool(
+async def execute_context_tool(
     tool_name: str,
     arguments: dict[str, Any],
     context: str,
     session_stats: dict[str, Any] | None = None,
     session_entries: list[dict] | None = None,
+    provider: Any = None,
+    summarize_model_id: str | None = None,
+    session_id: str | None = None,
 ) -> ContextToolResult:
     """Execute a context tool and return the result.
     
@@ -152,6 +206,8 @@ def execute_context_tool(
         context: Full session context string
         session_stats: Statistics about the session
         session_entries: List of context entries
+        provider: Provider instance for making upstream calls (needed for rlm_summarize)
+        summarize_model_id: Model to use for summarization
         
     Returns:
         ContextToolResult with success/failure and data
@@ -159,6 +215,9 @@ def execute_context_tool(
     try:
         if tool_name == "rlm_get_context":
             return _tool_get_context(context, arguments)
+        
+        elif tool_name == "rlm_summarize":
+            return await _tool_summarize(context, arguments, provider, summarize_model_id)
         
         elif tool_name == "rlm_search":
             return _tool_search(context, arguments)
@@ -171,6 +230,36 @@ def execute_context_tool(
         
         elif tool_name == "rlm_get_entries":
             return _tool_get_entries(session_entries or [], arguments)
+            
+        elif tool_name == "rlm_forget":
+            from rlm_opencode.session import session_manager
+            
+            try:
+                offset = int(arguments.get("offset"))
+                length = int(arguments.get("length"))
+            except (ValueError, TypeError):
+                raise ValueError("Both offset and length are required and must be integers for rlm_forget")
+
+            reason = arguments.get("reason", "No reason provided")
+                
+            if not session_id:
+                raise ValueError("Session ID is required to use rlm_forget")
+                
+            success = session_manager.forget_context(session_id, offset, length, reason)
+            
+            if success:
+                return ContextToolResult(
+                    tool_name="rlm_forget",
+                    success=True,
+                    result={"message": f"Successfully redacted {length} characters at offset {offset}. Indices have been rebuilt."},
+                )
+            else:
+                return ContextToolResult(
+                    tool_name="rlm_forget",
+                    success=False,
+                    result={},
+                    error="Failed to prune context. Session may not exist."
+                )
         
         else:
             return ContextToolResult(
@@ -191,8 +280,11 @@ def execute_context_tool(
 
 def _tool_get_context(context: str, args: dict) -> ContextToolResult:
     """Get a chunk of context."""
-    offset = max(0, args.get("offset", 0))
-    length = min(50000, max(1, args.get("length", 10000)))
+    try:
+        offset = max(0, int(args.get("offset", 0)))
+        length = min(50000, max(1, int(args.get("length", 10000))))
+    except (ValueError, TypeError):
+        offset, length = 0, 10000
     
     if offset >= len(context):
         return ContextToolResult(
@@ -218,11 +310,84 @@ def _tool_get_context(context: str, args: dict) -> ContextToolResult:
     )
 
 
+async def _tool_summarize(context: str, args: dict, provider: Any, model_id: str | None) -> ContextToolResult:
+    """Summarize a large chunk of context using an upstream model."""
+    if not provider or not model_id:
+        return ContextToolResult(
+            tool_name="rlm_summarize",
+            success=False,
+            result={},
+            error="Summarization provider/model not configured."
+        )
+
+    try:
+        offset = max(0, int(args.get("offset", 0)))
+        length = min(100000, max(1, int(args.get("length", 50000))))
+    except (ValueError, TypeError):
+        offset, length = 0, 50000
+        
+    focus = args.get("focus", "")
+    
+    if offset >= len(context):
+        return ContextToolResult(
+            tool_name="rlm_summarize",
+            success=False,
+            result={},
+            error=f"Offset {offset} exceeds context length {len(context)}"
+        )
+    
+    chunk = context[offset:offset + length]
+    end_offset = min(offset + length, len(context))
+    
+    prompt = "Summarize the following historical context chunk from a coding session."
+    if focus:
+        prompt += f" Pay special attention to: {focus}."
+    prompt += " Keep it dense, bulleted, and focus on technical decisions, code changes, and problem-solving steps.\n\n"
+    prompt += f"--- CONTEXT (Offset: {offset}, Length: {len(chunk)}) ---\n"
+    prompt += chunk
+
+    try:
+        # provider.stream returns an AsyncGenerator[StreamChunk, None]
+        chunks = []
+        async for completion_chunk in provider.stream(
+            model_id=model_id,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.3, # Low temperature for factual summarization
+            max_tokens=1000,
+            tools=None
+        ):
+            chunks.append(completion_chunk.content)
+            
+        summary = "".join(chunks)
+        
+        return ContextToolResult(
+            tool_name="rlm_summarize",
+            success=True,
+            result={
+                "summary": summary,
+                "offset": offset,
+                "length": len(chunk),
+                "focus": focus or "general",
+                "has_more": end_offset < len(context),
+            }
+        )
+    except Exception as e:
+        return ContextToolResult(
+            tool_name="rlm_summarize",
+            success=False,
+            result={},
+            error=f"Summarization failed: {str(e)}"
+        )
+
+
 def _tool_search(context: str, args: dict) -> ContextToolResult:
     """Search context with regex."""
     pattern = args.get("pattern", "")
-    max_results = min(200, max(1, args.get("max_results", 50)))
-    context_lines = max(0, args.get("context_lines", 2))
+    try:
+        max_results = min(200, max(1, int(args.get("max_results", 50))))
+        context_lines = max(0, int(args.get("context_lines", 2)))
+    except (ValueError, TypeError):
+        max_results, context_lines = 50, 2
     
     if not pattern:
         return ContextToolResult(
@@ -279,7 +444,10 @@ def _tool_search(context: str, args: dict) -> ContextToolResult:
 def _tool_find(context: str, args: dict) -> ContextToolResult:
     """Find exact text occurrences."""
     text = args.get("text", "")
-    max_results = min(500, max(1, args.get("max_results", 100)))
+    try:
+        max_results = min(500, max(1, int(args.get("max_results", 100))))
+    except (ValueError, TypeError):
+        max_results = 100
     
     if not text:
         return ContextToolResult(
@@ -346,7 +514,10 @@ def _tool_stats(context: str, stats: dict | None) -> ContextToolResult:
 def _tool_get_entries(entries: list[dict], args: dict) -> ContextToolResult:
     """Get context entry information."""
     entry_type = args.get("entry_type", "all")
-    limit = min(100, max(1, args.get("limit", 20)))
+    try:
+        limit = min(100, max(1, int(args.get("limit", 20))))
+    except (ValueError, TypeError):
+        limit = 20
     
     filtered = entries
     if entry_type != "all":

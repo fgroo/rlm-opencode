@@ -1,0 +1,733 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>RLM-OpenCode Live</title>
+	<link
+		href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&family=JetBrains+Mono:wght@400;700&display=swap"
+		rel="stylesheet">
+	<style>
+		:root {
+			--bg-dark: #09090b;
+			--neon-blue: #00f0ff;
+			--neon-purple: #b300ff;
+			--neon-pink: #ff007f;
+			--text-main: #f8fafc;
+			--text-dim: #94a3b8;
+			--grid-color: rgba(0, 240, 255, 0.05);
+		}
+
+		body {
+			margin: 0;
+			padding: 0;
+			background-color: var(--bg-dark);
+			color: var(--text-main);
+			font-family: 'Outfit', sans-serif;
+			overflow-x: hidden;
+			background-image:
+				linear-gradient(var(--grid-color) 1px, transparent 1px),
+				linear-gradient(90deg, var(--grid-color) 1px, transparent 1px);
+			background-size: 50px 50px;
+			background-position: center;
+		}
+
+		/* Ambient Milkyway Glow */
+		.milkyway {
+			position: fixed;
+			top: -50%;
+			left: -50%;
+			width: 200vw;
+			height: 200vh;
+			background:
+				radial-gradient(circle at 35% 45%, rgba(179, 0, 255, 0.08) 0%, transparent 40%),
+				radial-gradient(circle at 65% 55%, rgba(0, 240, 255, 0.08) 0%, transparent 40%),
+				radial-gradient(circle at 50% 50%, rgba(255, 0, 127, 0.05) 0%, transparent 50%);
+			animation: rotateGlow 60s linear infinite;
+			z-index: -1;
+			pointer-events: none;
+		}
+
+		.milkyway::before,
+		.milkyway::after {
+			content: '';
+			position: absolute;
+			border-radius: 50%;
+			filter: blur(60px);
+			animation: floatPearl 20s infinite ease-in-out alternate;
+		}
+
+		.milkyway::before {
+			top: 30%;
+			left: 30%;
+			width: 400px;
+			height: 400px;
+			background: radial-gradient(circle, rgba(255, 255, 255, 0.15) 0%, rgba(0, 240, 255, 0.05) 50%, transparent 100%);
+		}
+
+		.milkyway::after {
+			bottom: 30%;
+			right: 30%;
+			width: 500px;
+			height: 500px;
+			background: radial-gradient(circle, rgba(255, 255, 255, 0.1) 0%, rgba(179, 0, 255, 0.08) 50%, transparent 100%);
+			animation-delay: -10s;
+		}
+
+		@keyframes rotateGlow {
+			0% {
+				transform: rotate(0deg);
+			}
+
+			100% {
+				transform: rotate(360deg);
+			}
+		}
+
+		@keyframes floatPearl {
+			0% {
+				transform: translate(0, 0) scale(1);
+			}
+
+			100% {
+				transform: translate(150px, -100px) scale(1.2);
+			}
+		}
+
+		.container {
+			max-width: 1400px;
+			margin: 0 auto;
+			padding: 40px 20px;
+		}
+
+		header {
+			display: flex;
+			justify-content: space-between;
+			align-items: center;
+			margin-bottom: 50px;
+			border-bottom: 1px solid rgba(0, 240, 255, 0.2);
+			padding-bottom: 20px;
+		}
+
+		.title {
+			font-size: 2.5rem;
+			font-weight: 800;
+			letter-spacing: -1px;
+			text-transform: uppercase;
+			position: relative;
+			display: inline-block;
+		}
+
+		.title::after {
+			content: '';
+			position: absolute;
+			bottom: -5px;
+			left: 0;
+			width: 100%;
+			height: 2px;
+			background: linear-gradient(90deg, var(--neon-blue), var(--neon-purple));
+			box-shadow: 0 0 10px var(--neon-blue);
+		}
+
+		.status {
+			display: flex;
+			align-items: center;
+			gap: 12px;
+			font-family: 'JetBrains Mono', monospace;
+			font-size: 0.9rem;
+			color: var(--neon-blue);
+			text-shadow: 0 0 5px rgba(0, 240, 255, 0.5);
+		}
+
+		.strict-badge {
+			display: none;
+			padding: 4px 8px;
+			font-family: 'JetBrains Mono', monospace;
+			font-size: 0.75rem;
+			font-weight: bold;
+			border-radius: 4px;
+			letter-spacing: 1px;
+		}
+
+		.strict-badge.active {
+			display: inline-block;
+		}
+
+		.strict-badge.level-1 {
+			background: rgba(0, 240, 255, 0.1);
+			border: 1px solid var(--neon-blue);
+			color: var(--neon-blue);
+			text-shadow: 0 0 5px rgba(0, 240, 255, 0.8);
+			box-shadow: 0 0 10px rgba(0, 240, 255, 0.2);
+		}
+
+		.strict-badge.level-2 {
+			background: rgba(180, 0, 255, 0.1);
+			border: 1px solid var(--neon-purple);
+			color: var(--neon-purple);
+			text-shadow: 0 0 5px rgba(180, 0, 255, 0.8);
+			box-shadow: 0 0 10px rgba(180, 0, 255, 0.2);
+		}
+
+		.strict-badge.level-3 {
+			background: rgba(255, 0, 127, 0.1);
+			border: 1px solid var(--neon-pink);
+			color: var(--neon-pink);
+			text-shadow: 0 0 5px rgba(255, 0, 127, 0.8);
+			box-shadow: 0 0 10px rgba(255, 0, 127, 0.2);
+		}
+
+		.strict-badge.level-4 {
+			background: rgba(255, 0, 0, 0.15);
+			border: 1px solid #ff0000;
+			color: #ff0000;
+			text-shadow: 0 0 8px rgba(255, 0, 0, 0.9);
+			box-shadow: 0 0 15px rgba(255, 0, 0, 0.4);
+			animation: pulseRed 0.8s infinite;
+		}
+
+		@keyframes pulseRed {
+			0% {
+				box-shadow: 0 0 10px rgba(255, 0, 0, 0.2);
+			}
+
+			50% {
+				box-shadow: 0 0 25px rgba(255, 0, 0, 0.8);
+				background: rgba(255, 0, 0, 0.3);
+			}
+
+			100% {
+				box-shadow: 0 0 10px rgba(255, 0, 0, 0.2);
+			}
+		}
+
+		@keyframes pulsePink {
+			0% {
+				box-shadow: 0 0 5px rgba(255, 0, 127, 0.2);
+			}
+
+			50% {
+				box-shadow: 0 0 15px rgba(255, 0, 127, 0.6);
+			}
+
+			100% {
+				box-shadow: 0 0 5px rgba(255, 0, 127, 0.2);
+			}
+		}
+
+		.status-dot {
+			width: 12px;
+			height: 12px;
+			background-color: var(--neon-blue);
+			border-radius: 50%;
+			box-shadow: 0 0 10px var(--neon-blue), 0 0 20px var(--neon-blue);
+			animation: pulse 2s infinite;
+		}
+
+		.status.offline .status-dot {
+			background-color: var(--neon-pink);
+			box-shadow: 0 0 10px var(--neon-pink), 0 0 20px var(--neon-pink);
+		}
+
+		.status.offline {
+			color: var(--neon-pink);
+			text-shadow: 0 0 5px rgba(255, 0, 127, 0.5);
+		}
+
+		@keyframes pulse {
+			0% {
+				transform: scale(1);
+				opacity: 1;
+			}
+
+			50% {
+				transform: scale(1.2);
+				opacity: 0.7;
+			}
+
+			100% {
+				transform: scale(1);
+				opacity: 1;
+			}
+		}
+
+		/* Metrics Row */
+		.metrics-grid {
+			display: grid;
+			grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+			gap: 30px;
+			margin-bottom: 50px;
+		}
+
+		.metric-card {
+			background: transparent;
+			border: 1px solid rgba(0, 240, 255, 0.1);
+			padding: 25px;
+			position: relative;
+			z-index: 1;
+		}
+
+		.metric-card::before {
+			content: '';
+			position: absolute;
+			top: -2px;
+			left: -2px;
+			width: 25px;
+			height: 25px;
+			border-top: 3px solid var(--neon-blue);
+			border-left: 3px solid var(--neon-blue);
+			box-shadow: -2px -2px 10px rgba(0, 240, 255, 0.5);
+			pointer-events: none;
+		}
+
+		.metric-card::after {
+			content: '';
+			position: absolute;
+			bottom: -2px;
+			right: -2px;
+			width: 25px;
+			height: 25px;
+			border-bottom: 3px solid var(--neon-purple);
+			border-right: 3px solid var(--neon-purple);
+			box-shadow: 2px 2px 10px rgba(179, 0, 255, 0.5);
+			pointer-events: none;
+		}
+
+		.metric-title {
+			font-family: 'JetBrains Mono', monospace;
+			font-size: 0.8rem;
+			color: var(--text-dim);
+			text-transform: uppercase;
+			letter-spacing: 1px;
+			margin-bottom: 10px;
+		}
+
+		.metric-value {
+			font-size: 3rem;
+			font-weight: 800;
+			line-height: 1;
+			background: linear-gradient(135deg, #fff, var(--neon-blue));
+			-webkit-background-clip: text;
+			background-clip: text;
+			-webkit-text-fill-color: transparent;
+			text-shadow: 0 0 20px rgba(0, 240, 255, 0.2);
+			transition: all 0.3s;
+		}
+
+		.metric-value.bump {
+			animation: valueBump 0.3s ease-out;
+		}
+
+		@keyframes valueBump {
+			0% {
+				transform: scale(1);
+			}
+
+			50% {
+				transform: scale(1.1) translateY(-5px);
+				color: var(--neon-purple);
+				-webkit-text-fill-color: var(--neon-purple);
+				text-shadow: 0 0 20px var(--neon-purple);
+			}
+
+			100% {
+				transform: scale(1);
+			}
+		}
+
+		/* Chilling SVG Figures */
+		.chiller {
+			position: absolute;
+			top: -35px;
+			right: 20px;
+			width: 40px;
+			height: 40px;
+			animation: chillBop 3s infinite ease-in-out;
+			z-index: 2;
+		}
+
+		.chiller svg {
+			width: 100%;
+			height: 100%;
+		}
+
+		@keyframes chillBop {
+
+			0%,
+			100% {
+				transform: translateY(0) rotate(-5deg);
+			}
+
+			50% {
+				transform: translateY(-5px) rotate(5deg);
+			}
+		}
+
+		/* Logs Section */
+		.logs-section {
+			background: transparent;
+			border: 1px solid rgba(179, 0, 255, 0.1);
+			border-left: 4px solid var(--neon-purple);
+			position: relative;
+		}
+
+		.logs-section::after {
+			content: '';
+			position: absolute;
+			top: -2px;
+			right: -2px;
+			width: 30px;
+			height: 30px;
+			border-top: 3px solid var(--neon-purple);
+			border-right: 3px solid var(--neon-purple);
+			box-shadow: 2px -2px 10px rgba(179, 0, 255, 0.5);
+			pointer-events: none;
+		}
+
+		.logs-header {
+			padding: 15px 25px;
+			border-bottom: 1px dashed rgba(179, 0, 255, 0.2);
+			font-family: 'JetBrains Mono', monospace;
+			font-size: 0.9rem;
+			color: var(--neon-purple);
+			display: flex;
+			justify-content: space-between;
+		}
+
+		.logs-container {
+			height: 400px;
+			overflow-y: auto;
+			padding: 20px;
+			font-family: 'JetBrains Mono', monospace;
+			font-size: 0.85rem;
+			scroll-behavior: smooth;
+		}
+
+		.logs-container::-webkit-scrollbar {
+			width: 8px;
+		}
+
+		.logs-container::-webkit-scrollbar-track {
+			background: rgba(0, 0, 0, 0.5);
+		}
+
+		.logs-container::-webkit-scrollbar-thumb {
+			background: rgba(179, 0, 255, 0.5);
+		}
+
+		.log-entry {
+			margin-bottom: 12px;
+			line-height: 1.4;
+			opacity: 0;
+			animation: slideIn 0.3s forwards;
+			padding-left: 15px;
+			border-left: 2px solid transparent;
+		}
+
+		@keyframes slideIn {
+			from {
+				opacity: 0;
+				transform: translateX(-10px);
+			}
+
+			to {
+				opacity: 1;
+				transform: translateX(0);
+			}
+		}
+
+		.log-time {
+			color: var(--text-dim);
+			margin-right: 15px;
+			font-size: 0.75rem;
+		}
+
+		.log-type-stream {
+			color: var(--neon-blue);
+			border-left-color: var(--neon-blue);
+		}
+
+		.log-type-tool {
+			color: var(--neon-purple);
+			border-left-color: var(--neon-purple);
+		}
+
+		.log-type-system {
+			color: #facc15;
+			border-left-color: #facc15;
+		}
+
+		.log-type-error {
+			color: var(--neon-pink);
+			border-left-color: var(--neon-pink);
+		}
+
+		.log-highlight {
+			color: #fff;
+			text-shadow: 0 0 5px rgba(255, 255, 255, 0.5);
+		}
+
+		/* Active Pipeline Indicator */
+		.pipeline {
+			margin-top: 50px;
+			display: flex;
+			align-items: center;
+			justify-content: center;
+			gap: 20px;
+		}
+
+		.pipe-node {
+			padding: 10px 20px;
+			border: 1px solid var(--text-dim);
+			border-radius: 4px;
+			font-family: 'JetBrains Mono', monospace;
+			font-size: 0.8rem;
+			color: var(--text-dim);
+			transition: all 0.3s;
+		}
+
+		.pipe-line {
+			width: 50px;
+			height: 2px;
+			background: var(--text-dim);
+			position: relative;
+		}
+
+		.pipeline.active .pipe-node {
+			border-color: var(--neon-blue);
+			color: var(--neon-blue);
+			box-shadow: 0 0 10px rgba(0, 240, 255, 0.2) inset;
+		}
+
+		.pipeline.active .pipe-line {
+			background: var(--neon-blue);
+		}
+
+		.pipeline.active .pipe-line::after {
+			content: '';
+			position: absolute;
+			top: -2px;
+			left: 0;
+			width: 10px;
+			height: 6px;
+			background: #fff;
+			box-shadow: 0 0 10px #fff, 0 0 20px var(--neon-blue);
+			animation: travel 1s infinite linear;
+		}
+
+		@keyframes travel {
+			0% {
+				left: 0;
+				opacity: 1;
+			}
+
+			90% {
+				left: 40px;
+				opacity: 1;
+			}
+
+			100% {
+				left: 50px;
+				opacity: 0;
+			}
+		}
+	</style>
+</head>
+
+<body>
+
+	<div class="milkyway"></div>
+
+	<div class="container">
+		<header>
+			<div style="display: flex; align-items: center; gap: 20px;">
+				<div class="title">RLM-OpenCode Live</div>
+				<div id="strict-badge" class="strict-badge">STRICT MODE</div>
+			</div>
+			<div class="status" id="connection-status">
+				<div class="status-dot"></div>
+				<span id="status-text">CONNECTING...</span>
+			</div>
+		</header>
+
+		<div class="metrics-grid">
+			<div class="metric-card">
+				<div class="chiller">
+					<svg viewBox="0 0 100 100">
+						<!-- Playful blob/bean -->
+						<path
+							d="M 25 50 C 10 30 30 10 50 20 C 70 10 90 30 75 50 C 90 70 70 90 50 80 C 30 90 10 70 25 50 Z"
+							fill="var(--neon-blue)" opacity="0.9" filter="drop-shadow(0 0 8px var(--neon-blue))" />
+					</svg>
+				</div>
+				<div class="metric-title">Context Volume</div>
+				<div class="metric-value" id="metric-context">0</div>
+			</div>
+
+			<div class="metric-card">
+				<div class="chiller" style="animation-delay: 0.5s;">
+					<svg viewBox="0 0 100 100">
+						<!-- Squarcle / Arch shape -->
+						<path
+							d="M 20 40 C 20 20 40 20 50 20 C 60 20 80 20 80 40 L 80 70 C 80 80 70 80 60 80 L 40 80 C 30 80 20 80 20 70 Z"
+							fill="var(--neon-purple)" opacity="0.9" filter="drop-shadow(0 0 8px var(--neon-purple))" />
+					</svg>
+				</div>
+				<div class="metric-title">RLM Tool Calls</div>
+				<div class="metric-value" id="metric-tools">0</div>
+			</div>
+
+			<div class="metric-card">
+				<div class="chiller" style="animation-delay: 1s;">
+					<svg viewBox="0 0 100 100">
+						<!-- Playful Star/Flower -->
+						<path
+							d="M 50 15 C 55 15 60 30 70 30 C 80 30 85 40 80 50 C 85 60 80 70 70 70 C 60 70 55 85 50 85 C 45 85 40 70 30 70 C 20 70 15 60 20 50 C 15 40 20 30 30 30 C 40 30 45 15 50 15 Z"
+							fill="var(--neon-pink)" opacity="0.9" filter="drop-shadow(0 0 8px var(--neon-pink))" />
+					</svg>
+				</div>
+				<div class="metric-title">Active Iteration</div>
+				<div class="metric-value" id="metric-iter">0</div>
+			</div>
+		</div>
+
+		<div class="pipeline" id="pipeline-indicator">
+			<div class="pipe-node">OpenCode</div>
+			<div class="pipe-line"></div>
+			<div class="pipe-node">RLM Proxy</div>
+			<div class="pipe-line"></div>
+			<div class="pipe-node">Upstream LLM</div>
+		</div>
+
+		<div class="logs-section" style="margin-top: 40px;">
+			<div class="logs-header">
+				<span>> SERVER_TELEMETRY_STREAM</span>
+				<span id="log-count">0 EVENTS</span>
+			</div>
+			<div class="logs-container" id="logs-container">
+				<!-- Logs injected here -->
+			</div>
+		</div>
+	</div>
+
+	<script>
+		const logsContainer = document.getElementById('logs-container');
+		const metricContext = document.getElementById('metric-context');
+		const metricTools = document.getElementById('metric-tools');
+		const metricIter = document.getElementById('metric-iter');
+		const statusEl = document.getElementById('connection-status');
+		const statusText = document.getElementById('status-text');
+		const pipeline = document.getElementById('pipeline-indicator');
+		const logCount = document.getElementById('log-count');
+		const strictBadge = document.getElementById('strict-badge');
+
+		// Check strict mode template injection
+		const strictLevel = parseInt("___STRICT_MODE_TEMPLATE___", 10) || 0;
+		if (strictLevel > 0) {
+			strictBadge.classList.add('active');
+			strictBadge.classList.add(`level-${strictLevel}`);
+			strictBadge.innerText = `STRICT LVL ${strictLevel}`;
+		}
+
+		let eventCount = 0;
+		let totalTools = 0;
+
+		function formatNumber(num) {
+			if (num > 1000000) return (num / 1000000).toFixed(2) + 'M';
+			if (num > 1000) return (num / 1000).toFixed(1) + 'K';
+			return num;
+		}
+
+		function updateMetric(el, value) {
+			if (el.innerText !== value.toString() && el.innerText !== formatNumber(value)) {
+				el.innerText = formatNumber(value);
+				el.classList.remove('bump');
+				void el.offsetWidth; // trigger reflow
+				el.classList.add('bump');
+			}
+		}
+
+		function appendLog(type, message) {
+			const entry = document.createElement('div');
+			entry.className = `log-entry log-type-${type}`;
+
+			const time = new Date().toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit', fractionalSecondDigits: 3 });
+
+			entry.innerHTML = `<span class="log-time">[${time}]</span> ${message}`;
+			logsContainer.appendChild(entry);
+
+			// Auto scroll
+			logsContainer.scrollTop = logsContainer.scrollHeight;
+
+			// Cleanup old logs
+			if (logsContainer.children.length > 100) {
+				logsContainer.removeChild(logsContainer.firstChild);
+			}
+
+			eventCount++;
+			logCount.innerText = `${eventCount} EVENTS`;
+		}
+
+		function connectWebSocket() {
+			const wsUrl = `ws://${window.location.host}/ws/dashboard`;
+			const ws = new WebSocket(wsUrl);
+
+			ws.onopen = () => {
+				statusEl.classList.remove('offline');
+				statusText.innerText = 'CONNECTED';
+				appendLog('system', 'WebSocket connected to RLM Server');
+			};
+
+			ws.onclose = () => {
+				statusEl.classList.add('offline');
+				statusText.innerText = 'OFFLINE';
+				pipeline.classList.remove('active');
+				setTimeout(connectWebSocket, 2000);
+			};
+
+			ws.onerror = () => {
+				appendLog('error', 'WebSocket connection error');
+			};
+
+			ws.onmessage = (event) => {
+				try {
+					const payload = JSON.parse(event.data);
+
+					if (payload.type === 'stream_start') {
+						pipeline.classList.add('active');
+						appendLog('stream', `Stream started for <span class="log-highlight">${payload.data.model}</span> (Session: ${payload.data.session_id.substring(0, 8)})`);
+						if (payload.data.context_chars) {
+							updateMetric(metricContext, payload.data.context_chars);
+						}
+					}
+					else if (payload.type === 'stream_end') {
+						pipeline.classList.remove('active');
+						appendLog('stream', `Stream complete. Iteration <span class="log-highlight">${payload.data.iteration}</span>.`);
+						updateMetric(metricIter, payload.data.iteration);
+					}
+					else if (payload.type === 'tool_call') {
+						totalTools++;
+						updateMetric(metricTools, totalTools);
+						appendLog('tool', `Executed Tool: <span class="log-highlight">${payload.data.tool_name}</span>`);
+					}
+					else if (payload.type === 'system') {
+						appendLog('system', payload.data.message);
+					}
+				} catch (e) {
+					console.error("Failed to parse message", e);
+				}
+			};
+		}
+
+		// Start connection
+		connectWebSocket();
+
+		// Initial setup
+		updateMetric(metricContext, 0);
+		updateMetric(metricTools, 0);
+		updateMetric(metricIter, 0);
+	</script>
+</body>
+
+</html>
