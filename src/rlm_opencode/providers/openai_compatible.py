@@ -62,7 +62,7 @@ class OpenAICompatibleProvider(BaseProvider):
         import sys
         import asyncio
         
-        max_retries = 3
+        max_retries = 10
         base_backoff = 2.0
         
         print(f"[OpenAICompat] POST {url} model={model_id}", file=sys.stderr, flush=True)
