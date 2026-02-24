@@ -76,6 +76,8 @@ The model has access to these tools:
 | `rlm_find(text, max_results)` | Find exact text |
 | `rlm_stats()` | Get context statistics |
 | `rlm_get_entries(type)` | List context entries |
+| `rlm_summarize(query, max_results)` | Semantically summarize parts of memory |
+| `rlm_forget(pattern)` | Delete context entries matching regex |
 
 ## Architecture
 
