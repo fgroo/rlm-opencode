@@ -181,7 +181,7 @@ class BaseProvider(ABC):
                                 return prov_auth[7:]
                 
                 # Extract domain from baseURL for MCP env var matching
-                # e.g., "https://api.z.ai/api/..." → "z.ai" → "Z_AI"
+                # e.g., "https://generativelanguage.googleapis.com/..." → "googleapis.com" → "GOOGLE"
                 domain_prefix = None
                 if effective_base_url:
                     try:
@@ -191,7 +191,7 @@ class BaseProvider(ABC):
                         for prefix in ["api.", "open."]:
                             if host.startswith(prefix):
                                 host = host[len(prefix):]
-                        # Convert domain to env-style: "z.ai" → "Z_AI"
+                        # Convert domain to env-style: "googleapis.com" → "GOOGLE"
                         domain_prefix = host.upper().replace(".", "_")
                     except Exception:
                         pass
