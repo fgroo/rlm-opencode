@@ -437,9 +437,9 @@ class SessionManager:
             if session.incognito:
                 sep = "\n---ENTRY_SEPARATOR---\n"
                 content_with_sep = content + sep if not content.endswith("\n") else content + "---ENTRY_SEPARATOR---\n"
-                if session_id not in self._incognito_contexts:
-                    self._incognito_contexts[session_id] = ""
-                self._incognito_contexts[session_id] += content_with_sep
+                if session.id not in self._incognito_contexts:
+                    self._incognito_contexts[session.id] = ""
+                self._incognito_contexts[session.id] += content_with_sep
             else:
                 context_path = CONTEXTS_DIR / session.context_file
                 with open(context_path, "a") as f:
@@ -478,7 +478,7 @@ class SessionManager:
             raise ValueError(f"Session {session_id} not found")
         
         if session.incognito:
-            return self._incognito_contexts.get(session_id, "")
+            return self._incognito_contexts.get(session.id, "")
         
         context_path = CONTEXTS_DIR / session.context_file
         if context_path.exists():

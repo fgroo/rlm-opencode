@@ -397,8 +397,8 @@ def sessions():
 
 @app.command()
 def join(
-    session_to_redirect: str = typer.Argument(..., help="The ID of the empty session that will be redirected"),
     target_session: str = typer.Argument(..., help="The ID of the master session with the context"),
+    session_to_redirect: str = typer.Argument(..., help="The ID of the session that will be redirected"),
 ):
     """Link a session to another session's context (Party Mode).
     
