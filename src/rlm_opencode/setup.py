@@ -20,7 +20,8 @@ import sys
 import time
 from pathlib import Path
 
-import httpx
+import urllib.request
+import urllib.error
 
 OPENCODE_CONFIG = Path.home() / ".config" / "opencode" / "opencode.json"
 RLM_CONTEXT_LIMIT = 67000000  # 67M tokens (~300M chars) — NIAH benchmark validated up to 300M chars
@@ -71,8 +72,9 @@ def save_config(config):
 def is_server_running():
     """Check if RLM-OpenCode server is running."""
     try:
-        response = httpx.get(f"http://localhost:{SERVER_PORT}/health", timeout=2)
-        return response.status_code == 200
+        req = urllib.request.Request(f"http://localhost:{SERVER_PORT}/health")
+        with urllib.request.urlopen(req, timeout=2) as response:
+            return response.status == 200
     except:
         return False
 
@@ -259,9 +261,10 @@ def status():
     
     if running:
         try:
-            response = httpx.get(f"http://localhost:{SERVER_PORT}/health", timeout=2)
-            data = response.json()
-            print(f"  Version: {data.get('version')}, Mode: {data.get('mode')}")
+            req = urllib.request.Request(f"http://localhost:{SERVER_PORT}/health")
+            with urllib.request.urlopen(req, timeout=2) as response:
+                data = json.loads(response.read().decode())
+                print(f"  Version: {data.get('version')}, Mode: {data.get('mode')}")
         except:
             pass
     
@@ -304,10 +307,11 @@ def serve():
     if is_server_running():
         print(f"Server is already running on port {SERVER_PORT}!")
         try:
-            response = httpx.get(f"http://localhost:{SERVER_PORT}/health", timeout=2)
-            data = response.json()
-            print(f"URL: http://localhost:{SERVER_PORT}")
-            print(f"Version: {data.get('version')}, Mode: {data.get('mode')}")
+            req = urllib.request.Request(f"http://localhost:{SERVER_PORT}/health")
+            with urllib.request.urlopen(req, timeout=2) as response:
+                data = json.loads(response.read().decode())
+                print(f"URL: http://localhost:{SERVER_PORT}")
+                print(f"Version: {data.get('version')}, Mode: {data.get('mode')}")
         except:
             pass
         return 0

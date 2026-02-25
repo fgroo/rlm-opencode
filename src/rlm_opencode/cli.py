@@ -397,8 +397,8 @@ def sessions():
 
 @app.command()
 def join(
+    session_to_redirect: str = typer.Argument(..., help="The ID of the empty session that will be redirected"),
     target_session: str = typer.Argument(..., help="The ID of the master session with the context"),
-    session_to_redirect: str = typer.Argument(..., help="The ID of the session that will be redirected"),
 ):
     """Link a session to another session's context (Party Mode).
     
@@ -464,11 +464,20 @@ def unjoin(
     """Remove a session link, restoring its private context."""
     from rlm_opencode.session import session_manager
     
+    session = session_manager.get_raw_session(session_id)
+    if not session:
+        console.print(f"[red]Error:[/red] Could not find session {session_id}")
+        return
+        
+    if not session.target_session_id:
+        console.print(f"[yellow]Session {session_id} is already unlinked.[/yellow]")
+        return
+    
     if session_manager.set_target_session(session_id, None):
-        console.print(f"[yellow]Link removed.[/yellow]")
+        console.print(f"[green]Link removed.[/green]")
         console.print(f"Session [cyan]{session_id}[/cyan] now has its own private context again.")
     else:
-        console.print(f"[red]Error:[/red] Could not find session {session_id}")
+        console.print(f"[red]Error:[/red] Failed to unlink session {session_id}")
 
 
 @app.command()

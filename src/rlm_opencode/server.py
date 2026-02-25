@@ -845,15 +845,42 @@ async def _stream_with_tools(
             })
     
     # Max iterations reached
-    console.print(f"[yellow][_stream] Max iterations ({max_iterations}) reached[/yellow]")
-    data = {
-        "id": chat_id,
-        "object": "chat.completion.chunk",
-        "created": created,
-        "model": request.model,
-        "choices": [{"index": 0, "delta": {"content": "[RLM: Maximum tool iterations reached]"}, "finish_reason": "stop"}]
-    }
-    yield f"data: {json.dumps(data)}\n\n"
+    console.print(f"[yellow][_stream] Max iterations ({max_iterations}) reached. Forcing final response.[/yellow]")
+    current_messages.append({
+        "role": "system",
+        "content": "CRITICAL: Maximum tool iterations reached. You MUST provide a final conversational response to the user summarizing your findings. Do not attempt to call any more tools.",
+    })
+    
+    try:
+        async for chunk in provider.stream(
+            model_id,
+            current_messages,
+            temperature=request.temperature or 1.0,
+            max_tokens=request.max_tokens,
+            tools=None,
+        ):
+            if chunk.content:
+                data = {
+                    "id": chat_id,
+                    "object": "chat.completion.chunk",
+                    "created": created,
+                    "model": request.model,
+                    "choices": [{"index": 0, "delta": {"content": chunk.content}, "finish_reason": None}]
+                }
+                yield f"data: {json.dumps(data)}\n\n"
+                
+        # Send final stop chunk
+        stop_data = {
+            "id": chat_id,
+            "object": "chat.completion.chunk",
+            "created": created,
+            "model": request.model,
+            "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]
+        }
+        yield f"data: {json.dumps(stop_data)}\n\n"
+    except Exception as e:
+        console.print(f"[red]Error fetching final response: {e}[/red]")
+        
     await dashboard_mgr.broadcast("stream_end", {"iteration": max_iterations})
     yield "data: [DONE]\n\n"
 
