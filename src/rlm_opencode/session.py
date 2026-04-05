@@ -141,6 +141,7 @@ class SessionManager:
         self._incognito_sessions: set[str] = set()
         self._incognito_contexts: dict[str, str] = {}
         self._locks = defaultdict(threading.Lock)
+        self._last_saved_entry_count: dict[str, int] = {}  # Track entries already persisted
         self._ensure_dirs()
         self._init_db()
     
@@ -461,7 +462,7 @@ class SessionManager:
             session.stats.total_chars += len(content)
             if entry_type == "file_read":
                 session.stats.files_read += 1
-            elif entry_type == "tool_result":
+            elif entry_type == "tool_output":
                 session.stats.tool_outputs += 1
             elif entry_type == "thinking":
                 session.stats.thinking_blocks += 1
@@ -720,7 +721,7 @@ class SessionManager:
                 )
     
     def _save_session(self, session: Session):
-        """Save session to database."""
+        """Save session to database (incremental entry inserts)."""
         if session.incognito:
             return
         
@@ -741,9 +742,11 @@ class SessionManager:
                 json.dumps(session.stats.__dict__),
             ))
             
-            conn.execute("DELETE FROM entries WHERE session_id = ?", (session.id,))
+            # Only insert entries that haven't been persisted yet
+            already_saved = self._last_saved_entry_count.get(session.id, 0)
+            new_entries = session.entries[already_saved:]
             
-            for entry in session.entries:
+            for entry in new_entries:
                 conn.execute("""
                     INSERT INTO entries (session_id, type, offset, length, timestamp, metadata_json)
                     VALUES (?, ?, ?, ?, ?, ?)
@@ -755,6 +758,8 @@ class SessionManager:
                     entry.timestamp,
                     json.dumps(entry.metadata),
                 ))
+            
+            self._last_saved_entry_count[session.id] = len(session.entries)
     
     def _load_session(self, session_id: str) -> Session | None:
         """Load session from database."""

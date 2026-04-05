@@ -11,8 +11,9 @@ Key difference from legacy context injection:
 - RLM-OpenCode: Model requests context via tools (unlimited context)
 """
 import json
+import os
 import time
-from typing import AsyncGenerator
+from typing import Any, AsyncGenerator
 from uuid import uuid4
 
 from pathlib import Path
@@ -83,8 +84,7 @@ class ChatCompletionResponse(BaseModel):
     usage: dict = Field(default_factory=lambda: {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0})
 
 
-# Configurable thresholds (env vars)
-import os
+# Configurable thresholds
 # Default configurations
 RLM_DEFAULT_SETTINGS = {
     "rlm_capture_min_chars": 500,
@@ -109,7 +109,7 @@ RLM_SETTING_DESCRIPTIONS = {
     "rlm_summarize_model": "Optional specific model override used exclusively for rlm_summarize tool calls",
 }
 
-def get_setting(key: str) -> any:
+def get_setting(key: str) -> Any:
     """Get configuration with priority: Persistent JSON -> ENV var -> Default."""
     # 1. Try persistent config
     config = session_manager.get_config()
@@ -576,56 +576,129 @@ async def chat_completions(request: ChatCompletionRequest, x_rlm_session: str | 
             media_type="text/event-stream",
         )
     
-    result = []
-    finish_reason = None
-    tool_calls_accumulated = []
+    # Non-streaming path with RLM tool execution loop
+    context = session_manager.get_context(session_id)
+    session = session_manager.get_session(session_id)
+    session_entries = [e.__dict__ if hasattr(e, '__dict__') else e for e in (session.entries if session else [])]
+    session_stats = session.stats.__dict__ if session and session.stats else None
     
-    try:
-        async for chunk in provider.stream(
-            model_id,
-            enhanced_messages,
-            temperature=request.temperature or 1.0,
-            max_tokens=request.max_tokens,
-            tools=all_tools if all_tools else None,
-        ):
-            if chunk.content:
-                result.append(chunk.content)
-            if chunk.tool_calls:
-                tool_calls_accumulated.extend(chunk.tool_calls)
-            if chunk.finish_reason:
-                finish_reason = chunk.finish_reason
-    except Exception as e:
-        console.print(f"[red]Error: {e}[/red]")
-        raise HTTPException(status_code=500, detail=str(e))
+    current_messages = list(enhanced_messages)
+    max_iterations = 10
     
-    response_text = "".join(result)
-    console.print(f"[green]Response: {len(response_text)} chars[/green]")
-    
-    message_content = response_text if response_text else None
-    message_tool_calls = tool_calls_accumulated if tool_calls_accumulated else None
-    
-    return ChatCompletionResponse(
-        id=f"chatcmpl-{uuid4().hex[:8]}",
-        created=int(time.time()),
-        model=request.model,
-        choices=[
-            ChatCompletionChoice(
-                message=ChatMessage(
-                    role="assistant",
-                    content=message_content,
-                    tool_calls=message_tool_calls,
-                ),
-                finish_reason=finish_reason or "stop",
+    for iteration in range(max_iterations):
+        result = []
+        finish_reason = None
+        collected_tool_calls: list[dict] = []
+        
+        try:
+            async for chunk in provider.stream(
+                model_id,
+                current_messages,
+                temperature=request.temperature or 1.0,
+                max_tokens=request.max_tokens,
+                tools=all_tools if all_tools else None,
+            ):
+                if chunk.content:
+                    result.append(chunk.content)
+                if chunk.tool_calls:
+                    for tc_delta in chunk.tool_calls:
+                        idx = tc_delta.get("index", 0)
+                        while len(collected_tool_calls) <= idx:
+                            collected_tool_calls.append({"id": "", "type": "function", "function": {"name": "", "arguments": ""}})
+                        tc = collected_tool_calls[idx]
+                        if "id" in tc_delta:
+                            tc["id"] = tc_delta["id"]
+                        if "function" in tc_delta:
+                            fn = tc_delta["function"]
+                            if "name" in fn:
+                                tc["function"]["name"] += fn["name"]
+                            if "arguments" in fn:
+                                tc["function"]["arguments"] += fn["arguments"]
+                if chunk.finish_reason:
+                    finish_reason = chunk.finish_reason
+        except Exception as e:
+            console.print(f"[red]Error: {e}[/red]")
+            raise HTTPException(status_code=500, detail=str(e))
+        
+        response_text = "".join(result)
+        
+        # Check for rlm_ tool calls
+        rlm_tool_calls = [tc for tc in collected_tool_calls if tc["function"]["name"].startswith("rlm_")]
+        non_rlm_tool_calls = [tc for tc in collected_tool_calls if not tc["function"]["name"].startswith("rlm_")]
+        
+        if not rlm_tool_calls:
+            # No rlm_ tools — return final response
+            message_content = response_text if response_text else None
+            message_tool_calls = non_rlm_tool_calls if non_rlm_tool_calls else None
+            
+            console.print(f"[green]Response (iter {iteration+1}): {len(response_text)} chars[/green]")
+            
+            return ChatCompletionResponse(
+                id=f"chatcmpl-{uuid4().hex[:8]}",
+                created=int(time.time()),
+                model=request.model,
+                choices=[
+                    ChatCompletionChoice(
+                        message=ChatMessage(
+                            role="assistant",
+                            content=message_content,
+                            tool_calls=message_tool_calls,
+                        ),
+                        finish_reason=finish_reason or "stop",
+                    )
+                ],
+                usage={
+                    "prompt_tokens": 0,
+                    "completion_tokens": 0,
+                    "total_tokens": 0,
+                    "session_id": session_id,
+                    "context_chars": len(context),
+                }
             )
-        ],
-        usage={
-            "prompt_tokens": 0,
-            "completion_tokens": 0,
-            "total_tokens": 0,
-            "session_id": session_id,
-            "context_chars": len(context),
-        }
-    )
+        
+        # Execute rlm_ tools locally and loop back
+        console.print(f"[cyan][non-stream] Iteration {iteration+1}: executing {len(rlm_tool_calls)} rlm tool(s)[/cyan]")
+        
+        context = session_manager.get_context(session_id)
+        assistant_msg = {"role": "assistant", "content": response_text or None, "tool_calls": collected_tool_calls}
+        current_messages.append(assistant_msg)
+        
+        for tc in rlm_tool_calls:
+            tool_name = tc["function"]["name"]
+            try:
+                args = json.loads(tc["function"]["arguments"]) if tc["function"]["arguments"] else {}
+            except json.JSONDecodeError:
+                args = {}
+            
+            summarizer_model = get_setting("rlm_summarize_model") or model_id
+            
+            tool_result = await execute_context_tool(
+                tool_name, args, context,
+                session_stats=session_stats,
+                session_entries=session_entries,
+                provider=provider,
+                summarize_model_id=summarizer_model,
+                session_id=session_id,
+            )
+            
+            result_text = json.dumps(tool_result.result, indent=2) if tool_result.success else f"Error: {tool_result.error}"
+            
+            current_messages.append({
+                "role": "tool",
+                "tool_call_id": tc["id"],
+                "content": result_text,
+            })
+        
+        for tc in non_rlm_tool_calls:
+            current_messages.append({
+                "role": "tool",
+                "tool_call_id": tc["id"],
+                "content": "ERROR: You mixed rlm_ tools and external tools. The external tools were NOT executed. Please re-issue your external tool calls in your next turn.",
+            })
+    
+    # Max iterations reached
+    console.print(f"[yellow][non-stream] Max iterations ({max_iterations}) reached[/yellow]")
+    raise HTTPException(status_code=500, detail="RLM tool execution exceeded maximum iterations")
 
 
 async def _stream_with_tools(

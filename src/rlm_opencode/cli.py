@@ -49,10 +49,11 @@ def _get_server_pid() -> int | None:
 def _is_server_running() -> bool:
     """Check if the server is running."""
     try:
-        import httpx
-        r = httpx.get(f"http://localhost:{DEFAULT_PORT}/health", timeout=2)
-        return r.status_code == 200
-    except:
+        import urllib.request
+        req = urllib.request.Request(f"http://localhost:{DEFAULT_PORT}/health")
+        with urllib.request.urlopen(req, timeout=2) as response:
+            return response.status == 200
+    except Exception:
         return False
 
 
@@ -400,6 +401,10 @@ def join(
     target_session: str = typer.Argument(..., help="The ID of the master session with the context"),
     session_to_redirect: str = typer.Argument(..., help="The ID of the session that will be redirected"),
 ):
+    # FIXME: Party mode needs investigation:
+    # - No validation that target_session exists before linking
+    # - No concurrent write safety when two agents share context
+    # - No bidirectional sync or conflict resolution
     """Link a session to another session's context (Party Mode).
     
     Like dup2(), this redirects session_to_redirect's reads/writes to target_session.
@@ -418,6 +423,10 @@ def join(
 def import_ctx(
     file_path: str = typer.Argument(..., help="Path to the raw context.txt file to import"),
 ):
+    # FIXME: Session transfer needs investigation:
+    # - Entry type detection heuristics are fragile (startswith checks)
+    # - No progress feedback on large imports
+    # - User message vs tool output detection could misclassify entries
     """Import a raw context.txt file from another machine into a new session."""
     from rlm_opencode.session import session_manager
     
@@ -434,6 +443,7 @@ def branch(
     source_session_id: str = typer.Argument(..., help="The origin session ID to branch from"),
     drop_last: int = typer.Option(0, "--drop-last", "-d", help="Number of recent context entries to permanently drop in the new branch"),
 ):
+    # FIXME: Session branching shares the same fragile entry type detection as import
     """Clone an existing session, optionally dropping recent mistakes from memory.
     
     This is like Git for Agent Memory. If the agent goes down a huge rabbit hole

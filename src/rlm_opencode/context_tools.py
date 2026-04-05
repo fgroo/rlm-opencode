@@ -500,7 +500,7 @@ def _tool_stats(context: str, stats: dict | None) -> ContextToolResult:
     if stats:
         result.update({
             "files_read": stats.get("files_read", 0),
-            "tool_outputs": stats.get("commands_run", 0),
+            "tool_outputs": stats.get("tool_outputs", 0),
             "thinking_blocks": stats.get("thinking_blocks", 0),
         })
     
@@ -569,5 +569,12 @@ def format_tool_result_for_message(result: ContextToolResult) -> str:
     
     elif result.tool_name == "rlm_get_entries":
         return f"Showing {data['showing']}/{data['total']} entries"
+    
+    elif result.tool_name == "rlm_summarize":
+        focus = data.get('focus', 'general')
+        return f"Summary ({focus}): {data.get('summary', '')[:200]}"
+    
+    elif result.tool_name == "rlm_forget":
+        return data.get('message', 'Context redacted')
     
     return json.dumps(data, indent=2)

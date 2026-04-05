@@ -61,9 +61,11 @@ class OpenAICompatibleProvider(BaseProvider):
         
         import sys
         import asyncio
+        import random
         
         max_retries = 10
         base_backoff = 2.0
+        max_backoff = 60.0
         
         print(f"[OpenAICompat] POST {url} model={model_id}", file=sys.stderr, flush=True)
         
@@ -82,7 +84,7 @@ class OpenAICompatibleProvider(BaseProvider):
                             error_text = await response.aread()
                             error_msg = f"API error {response.status_code}: {error_text.decode()}"
                             if attempt < max_retries - 1:
-                                wait_time = base_backoff * (2 ** attempt)
+                                wait_time = min(base_backoff * (2 ** attempt) + random.uniform(0, base_backoff), max_backoff)
                                 print(f"[OpenAICompat] Transient error ({response.status_code}). Retrying in {wait_time}s... (Attempt {attempt+1}/{max_retries})", file=sys.stderr, flush=True)
                                 await asyncio.sleep(wait_time)
                                 continue
@@ -139,7 +141,7 @@ class OpenAICompatibleProvider(BaseProvider):
             except httpx.RequestError as e:
                 # Catch network level issues: ReadTimeout, ConnectTimeout, NetworkError
                 if attempt < max_retries - 1:
-                    wait_time = base_backoff * (2 ** attempt)
+                    wait_time = min(base_backoff * (2 ** attempt) + random.uniform(0, base_backoff), max_backoff)
                     print(f"[OpenAICompat] Network request error: {e}. Retrying in {wait_time}s... (Attempt {attempt+1}/{max_retries})", file=sys.stderr, flush=True)
                     await asyncio.sleep(wait_time)
                     continue

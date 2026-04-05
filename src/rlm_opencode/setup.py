@@ -332,7 +332,76 @@ def serve():
     return 1
 
 
+def check_dependencies() -> bool:
+    """Check all required dependencies and report missing ones clearly.
+    
+    Returns True if all dependencies are satisfied, False otherwise.
+    """
+    required_packages = {
+        "fastapi": "fastapi>=0.115.0",
+        "uvicorn": "uvicorn>=0.30.0",
+        "httpx": "httpx>=0.27.0",
+        "pydantic": "pydantic>=2.0.0",
+        "rich": "rich>=13.0.0",
+        "typer": "typer>=0.12.0",
+    }
+    
+    missing = []
+    for module_name, pip_spec in required_packages.items():
+        try:
+            __import__(module_name)
+        except ImportError:
+            missing.append((module_name, pip_spec))
+    
+    # Check for opencode binary
+    opencode_missing = False
+    try:
+        result = subprocess.run(
+            ["opencode", "--version"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if result.returncode != 0:
+            opencode_missing = True
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        opencode_missing = True
+    
+    if not missing and not opencode_missing:
+        return True
+    
+    print("=" * 60)
+    print("RLM-OpenCode — Missing Dependencies")
+    print("=" * 60)
+    print()
+    
+    if missing:
+        print(f"Missing Python packages ({len(missing)}):")
+        for module_name, pip_spec in missing:
+            print(f"  ✗ {module_name}")
+        print()
+        pip_specs = " ".join(f'"{spec}"' for _, spec in missing)
+        print(f"Install with:")
+        print(f"  pip install {pip_specs}")
+        print()
+        print("Or install all at once from the project:")
+        print("  pip install -e .")
+        print()
+    
+    if opencode_missing:
+        print("Missing external tool:")
+        print("  ✗ opencode (CLI binary not found in PATH)")
+        print()
+        print("Install opencode from: https://github.com/opencode-ai/opencode")
+        print()
+    
+    print("=" * 60)
+    return False
+
+
 def main():
+    if not check_dependencies():
+        print("Fix the above dependencies and try again.")
+        return 1
+    
     args = sys.argv[1:]
     
     if not args:
