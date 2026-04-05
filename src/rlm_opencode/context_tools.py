@@ -195,8 +195,8 @@ def get_context_tools_definition() -> list[dict]:
                     "properties": {
                         "action": {
                             "type": "string",
-                            "enum": ["list", "load", "search"],
-                            "description": "Action: 'list' all docs, 'load' a doc by tag into context, 'search' docs by keyword"
+                            "enum": ["list", "load", "search", "find_relevant"],
+                            "description": "Action: 'list' all docs, 'load' a doc by tag into context, 'search' docs by tag keyword, 'find_relevant' for semantic search across all doc content"
                         },
                         "tag": {
                             "type": "string",
@@ -204,7 +204,12 @@ def get_context_tools_definition() -> list[dict]:
                         },
                         "query": {
                             "type": "string",
-                            "description": "Keyword to search doc tags/titles. Used with 'search' action."
+                            "description": "Keyword for 'search' (tag matching) or natural language query for 'find_relevant' (semantic search)."
+                        },
+                        "top_k": {
+                            "type": "integer",
+                            "description": "Number of results for 'find_relevant' (default: 5)",
+                            "default": 5
                         }
                     },
                     "required": ["action"]
@@ -616,6 +621,12 @@ def format_tool_result_for_message(result: ContextToolResult) -> str:
         elif action == 'search':
             count = len(data.get('results', []))
             return f"Found {count} matching docs"
+        elif action == 'find_relevant':
+            results = data.get('results', [])
+            if results:
+                top = results[0]
+                return f"Found {len(results)} relevant chunks (best: {top.get('tag', '')} score={top.get('score', 0)})"
+            return "No relevant docs found"
         return f"Docs action: {action}"
     
     return json.dumps(data, indent=2)
@@ -712,10 +723,52 @@ def _tool_docs(context: str, args: dict, session_id: str | None = None) -> Conte
             }
         )
     
+    elif action == "find_relevant":
+        query = args.get("query", "")
+        top_k = min(20, max(1, int(args.get("top_k", 5))))
+        
+        if not query:
+            return ContextToolResult(
+                tool_name="rlm_docs",
+                success=False,
+                result={},
+                error="'query' is required for 'find_relevant' action"
+            )
+        
+        try:
+            from rlm_opencode.embeddings import get_embeddings
+            results = get_embeddings().search(query, top_k=top_k)
+            
+            return ContextToolResult(
+                tool_name="rlm_docs",
+                success=True,
+                result={
+                    "action": "find_relevant",
+                    "query": query,
+                    "results": [
+                        {
+                            "tag": r.tag,
+                            "score": r.score,
+                            "preview": r.content[:200],
+                            "chunk_offset": r.offset,
+                        }
+                        for r in results
+                    ],
+                    "hint": "Use rlm_docs(action='load', tag='...') to load the full document into your context."
+                }
+            )
+        except Exception as e:
+            return ContextToolResult(
+                tool_name="rlm_docs",
+                success=False,
+                result={},
+                error=f"Semantic search failed: {e}. Try 'search' action for keyword matching."
+            )
+    
     else:
         return ContextToolResult(
             tool_name="rlm_docs",
             success=False,
             result={},
-            error=f"Unknown action: {action}. Use 'list', 'load', or 'search'."
+            error=f"Unknown action: {action}. Use 'list', 'load', 'search', or 'find_relevant'."
         )

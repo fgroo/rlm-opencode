@@ -115,6 +115,14 @@ class DocsRegistry:
 
         self._entries[tag] = entry
         self._save_index()
+        
+        # Auto-index for vector search
+        try:
+            from rlm_opencode.embeddings import get_embeddings
+            get_embeddings().index_document(tag, content)
+        except Exception:
+            pass  # Non-critical: vector search is optional
+        
         return entry
 
     def remove(self, tag: str) -> bool:
@@ -122,6 +130,14 @@ class DocsRegistry:
         if tag in self._entries:
             del self._entries[tag]
             self._save_index()
+            
+            # Remove from vector index
+            try:
+                from rlm_opencode.embeddings import get_embeddings
+                get_embeddings().remove_document(tag)
+            except Exception:
+                pass
+            
             return True
         return False
 

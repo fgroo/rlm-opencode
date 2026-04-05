@@ -682,6 +682,45 @@ def docs(
         except NotADirectoryError as e:
             console.print(f"[red]Error:[/red] {e}")
     
+    elif action == "search":
+        if not arg1:
+            console.print("[red]Usage:[/red] rlm-opencode docs search <query>")
+            return
+        try:
+            from rlm_opencode.embeddings import get_embeddings
+            results = get_embeddings().search(arg1, top_k=10)
+            if not results:
+                console.print("[dim]No results found. Make sure docs are indexed.[/dim]")
+                return
+            
+            table = Table(title=f"Semantic Search: '{arg1}'")
+            table.add_column("Score", style="green", justify="right")
+            table.add_column("Tag", style="cyan")
+            table.add_column("Preview", style="dim")
+            
+            for r in results:
+                table.add_row(f"{r.score:.3f}", r.tag, r.content[:80] + "...")
+            
+            console.print(table)
+        except Exception as e:
+            console.print(f"[red]Error:[/red] {e}")
+    
+    elif action == "index":
+        console.print("[dim]Re-indexing all documents...[/dim]")
+        from rlm_opencode.embeddings import get_embeddings
+        embeddings = get_embeddings()
+        entries = registry.list_docs()
+        indexed = 0
+        for entry in entries:
+            content = registry.get_content(entry.tag)
+            if content:
+                embeddings.index_document(entry.tag, content)
+                indexed += 1
+                console.print(f"  [cyan]{entry.tag}[/cyan] indexed")
+        console.print(f"[green]✓ Indexed {indexed} documents[/green]")
+        stats = embeddings.get_stats()
+        console.print(f"[dim]  {stats['total_chunks']} chunks, {stats['total_terms']} unique terms[/dim]")
+    
     else:
         console.print(f"[red]Unknown action:[/red] {action}")
         console.print("Use: list, add, remove, or import-dir")
