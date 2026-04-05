@@ -405,6 +405,7 @@ Instead of seeing the full context, you have TOOLS to access it on-demand:
 - `rlm_find(text, max_results)` - Find exact text
 - `rlm_stats()` - Get context statistics
 - `rlm_get_entries(type)` - List context entries
+- `rlm_docs(action, tag, query)` - Access reference documentation library
 
 ## Strategy
 
@@ -413,6 +414,7 @@ Instead of seeing the full context, you have TOOLS to access it on-demand:
    - If you don't know the exact keywords to search for, use `rlm_summarize` to quickly skim huge sections.
    - Once you find the right section, use `rlm_search` or `rlm_get_context` to read the exact details.
 3. Think about what you're looking for before searching - good patterns save tokens
+4. For API documentation or man pages: use `rlm_docs(action='list')` to see what's available, then `rlm_docs(action='load', tag='...')` to inject it into your context
 
 Remember: You DON'T need to read the entire context. Summarize large chunks or search first, then read relevant sections.
 """

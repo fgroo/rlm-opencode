@@ -184,6 +184,32 @@ def get_context_tools_definition() -> list[dict]:
                     "required": ["offset", "length", "reason"]
                 }
             }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "rlm_docs",
+                "description": "Access reference documentation (man pages, API docs, guides) registered in your doc library. Use 'list' to see available docs, 'load' to inject a doc into your context, or 'search' to find docs by keyword.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "action": {
+                            "type": "string",
+                            "enum": ["list", "load", "search"],
+                            "description": "Action: 'list' all docs, 'load' a doc by tag into context, 'search' docs by keyword"
+                        },
+                        "tag": {
+                            "type": "string",
+                            "description": "Document tag to load (e.g., 'cppman/time', 'react/hooks'). Required for 'load' action."
+                        },
+                        "query": {
+                            "type": "string",
+                            "description": "Keyword to search doc tags/titles. Used with 'search' action."
+                        }
+                    },
+                    "required": ["action"]
+                }
+            }
         }
     ]
 
@@ -260,6 +286,9 @@ async def execute_context_tool(
                     result={},
                     error="Failed to prune context. Session may not exist."
                 )
+        
+        elif tool_name == "rlm_docs":
+            return _tool_docs(context, arguments, session_id)
         
         else:
             return ContextToolResult(
@@ -577,4 +606,116 @@ def format_tool_result_for_message(result: ContextToolResult) -> str:
     elif result.tool_name == "rlm_forget":
         return data.get('message', 'Context redacted')
     
+    elif result.tool_name == "rlm_docs":
+        action = data.get('action', '')
+        if action == 'list':
+            count = data.get('total', 0)
+            return f"Found {count} registered docs"
+        elif action == 'load':
+            return f"Loaded doc [{data.get('tag', '')}] ({data.get('size_chars', 0)} chars) into context"
+        elif action == 'search':
+            count = len(data.get('results', []))
+            return f"Found {count} matching docs"
+        return f"Docs action: {action}"
+    
     return json.dumps(data, indent=2)
+
+
+def _tool_docs(context: str, args: dict, session_id: str | None = None) -> ContextToolResult:
+    """Handle document reference operations."""
+    from rlm_opencode.docs import get_docs_registry
+    
+    action = args.get("action", "list")
+    registry = get_docs_registry()
+    
+    if action == "list":
+        docs = registry.list_docs()
+        doc_list = [
+            {
+                "tag": d.tag,
+                "title": d.title,
+                "size_chars": d.size_chars,
+                "doc_type": d.doc_type,
+            }
+            for d in docs
+        ]
+        return ContextToolResult(
+            tool_name="rlm_docs",
+            success=True,
+            result={
+                "action": "list",
+                "docs": doc_list,
+                "total": len(doc_list),
+                "hint": "Use rlm_docs(action='load', tag='...') to load a doc into your context, then use rlm_search to find content within it."
+            }
+        )
+    
+    elif action == "load":
+        tag = args.get("tag")
+        if not tag:
+            return ContextToolResult(
+                tool_name="rlm_docs",
+                success=False,
+                result={},
+                error="'tag' is required for 'load' action"
+            )
+        
+        formatted = registry.format_doc_for_context(tag)
+        if not formatted:
+            return ContextToolResult(
+                tool_name="rlm_docs",
+                success=False,
+                result={},
+                error=f"Document not found: {tag}"
+            )
+        
+        # Inject doc into session context
+        if session_id:
+            from rlm_opencode.session import session_manager
+            session_manager.append(session_id, "doc_ref", formatted)
+        
+        entry = registry.get(tag)
+        return ContextToolResult(
+            tool_name="rlm_docs",
+            success=True,
+            result={
+                "action": "load",
+                "tag": tag,
+                "title": entry.title if entry else tag,
+                "size_chars": len(formatted),
+                "hint": f"Doc '{tag}' is now in your context. Use rlm_search(pattern='[DOCS: {tag}') to navigate to it, or search for specific content within it."
+            }
+        )
+    
+    elif action == "search":
+        query = args.get("query", "")
+        if not query:
+            return ContextToolResult(
+                tool_name="rlm_docs",
+                success=False,
+                result={},
+                error="'query' is required for 'search' action"
+            )
+        
+        results = registry.search_tags(query)
+        return ContextToolResult(
+            tool_name="rlm_docs",
+            success=True,
+            result={
+                "action": "search",
+                "query": query,
+                "results": [
+                    {"tag": d.tag, "title": d.title, "size_chars": d.size_chars}
+                    for d in results
+                ],
+                "hint": "Use rlm_docs(action='load', tag='...') to load any of these into your context."
+            }
+        )
+    
+    else:
+        return ContextToolResult(
+            tool_name="rlm_docs",
+            success=False,
+            result={},
+            error=f"Unknown action: {action}. Use 'list', 'load', or 'search'."
+        )

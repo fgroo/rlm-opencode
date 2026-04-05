@@ -613,6 +613,81 @@ def models(
 
 
 @app.command()
+def docs(
+    action: str = typer.Argument("list", help="Action: add, remove, list, or import-dir"),
+    arg1: str = typer.Argument(None, help="Tag (for add/remove) or directory (for import-dir)"),
+    arg2: str = typer.Argument(None, help="File path (for add) or prefix (for import-dir)"),
+):
+    """Manage the reference documentation library.
+    
+    Examples:
+        rlm-opencode docs                          # List all registered docs
+        rlm-opencode docs add cppman/time /path/to/time.3
+        rlm-opencode docs remove cppman/time
+        rlm-opencode docs import-dir ./my-docs mylib
+    """
+    from rlm_opencode.docs import get_docs_registry
+    
+    registry = get_docs_registry()
+    
+    if action == "list":
+        entries = registry.list_docs()
+        if not entries:
+            console.print("[dim]No documents registered. Use 'rlm-opencode docs add <tag> <path>' to add one.[/dim]")
+            return
+        
+        table = Table(title="Registered Documents")
+        table.add_column("Tag", style="cyan")
+        table.add_column("Title", style="dim")
+        table.add_column("Size", justify="right", style="green")
+        table.add_column("Type", style="dim")
+        table.add_column("Path", style="dim")
+        
+        for entry in entries:
+            size = f"{entry.size_chars:,}" if entry.size_chars < 10000 else f"{entry.size_chars / 1000:.1f}K"
+            path_short = entry.file_path.replace(str(Path.home()), "~")
+            table.add_row(entry.tag, entry.title, size, entry.doc_type, path_short)
+        
+        console.print(table)
+    
+    elif action == "add":
+        if not arg1 or not arg2:
+            console.print("[red]Usage:[/red] rlm-opencode docs add <tag> <file_path>")
+            return
+        try:
+            entry = registry.add(arg1, arg2)
+            console.print(f"[green]✓ Registered:[/green] [cyan]{entry.tag}[/cyan] ({entry.size_chars:,} chars, {entry.doc_type})")
+        except FileNotFoundError as e:
+            console.print(f"[red]Error:[/red] {e}")
+    
+    elif action == "remove":
+        if not arg1:
+            console.print("[red]Usage:[/red] rlm-opencode docs remove <tag>")
+            return
+        if registry.remove(arg1):
+            console.print(f"[green]✓ Removed:[/green] [cyan]{arg1}[/cyan]")
+        else:
+            console.print(f"[yellow]Not found:[/yellow] {arg1}")
+    
+    elif action == "import-dir":
+        if not arg1:
+            console.print("[red]Usage:[/red] rlm-opencode docs import-dir <directory> [prefix]")
+            return
+        prefix = arg2 or ""
+        try:
+            entries = registry.import_directory(arg1, prefix)
+            console.print(f"[green]✓ Imported {len(entries)} documents[/green]")
+            for entry in entries:
+                console.print(f"  [cyan]{entry.tag}[/cyan] ({entry.size_chars:,} chars)")
+        except NotADirectoryError as e:
+            console.print(f"[red]Error:[/red] {e}")
+    
+    else:
+        console.print(f"[red]Unknown action:[/red] {action}")
+        console.print("Use: list, add, remove, or import-dir")
+
+
+@app.command()
 def clear(
     session_data: bool = typer.Option(False, "--sessions", help="Clear all sessions"),
     log_file: bool = typer.Option(False, "--log", help="Clear log file"),
