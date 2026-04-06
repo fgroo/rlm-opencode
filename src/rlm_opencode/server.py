@@ -95,6 +95,7 @@ RLM_DEFAULT_SETTINGS = {
     "rlm_token_reserve": 16000,
     "rlm_max_payload_chars": 250000,
     "rlm_summarize_model": None,
+    "rlm_max_tool_iterations": 50,
 }
 
 RLM_SETTING_DESCRIPTIONS = {
@@ -107,6 +108,7 @@ RLM_SETTING_DESCRIPTIONS = {
     "rlm_token_reserve": "Budget reserved for the model's generation output and tool responses",
     "rlm_max_payload_chars": "Absolute size limit of the immediate workspace injected natively into the LLM prompt",
     "rlm_summarize_model": "Optional specific model override used exclusively for rlm_summarize tool calls",
+    "rlm_max_tool_iterations": "Maximum tool call iterations per request before forcing a final response (default: 50)",
 }
 
 def get_setting(key: str) -> Any:
@@ -585,7 +587,7 @@ async def chat_completions(request: ChatCompletionRequest, x_rlm_session: str | 
     session_stats = session.stats.__dict__ if session and session.stats else None
     
     current_messages = list(enhanced_messages)
-    max_iterations = 10
+    max_iterations = get_setting("rlm_max_tool_iterations")
     
     for iteration in range(max_iterations):
         result = []
@@ -739,7 +741,7 @@ async def _stream_with_tools(
     })
     
     current_messages = list(messages)
-    max_iterations = 10  # Prevent infinite loops
+    max_iterations = get_setting("rlm_max_tool_iterations")
     
     for iteration in range(max_iterations):
         # Collect full response from upstream model

@@ -199,6 +199,7 @@ def status():
         ("RLM_USER_MIN_CHARS", "0"),
         ("RLM_ASSISTANT_MIN_CHARS", "50"),
         ("RLM_CAPTURE_MAX_CHARS", "50000"),
+        ("RLM_MAX_TOOL_ITERATIONS", "50"),
     ]
     for var, default in env_vars:
         val = os.environ.get(var, default)
