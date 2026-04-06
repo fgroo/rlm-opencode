@@ -159,6 +159,7 @@ rlm-opencode config rlm_max_payload_chars 75000
 | `rlm_user_min_chars` | 0 | Min chars for a user message to be captured (0 = all) |
 | `rlm_assistant_min_chars` | 50 | Min chars for an assistant response to be captured |
 | `rlm_summarize_model` | None | Specific model override for rlm_summarize tool calls |
+| `rlm_max_tool_iterations` | 50 | Max number of consecutive tool calls the model can make per turn |
 
 ## CLI Commands
 
@@ -173,6 +174,14 @@ rlm-opencode log [-f]       # View visually rendered session history tree (or fo
 rlm-opencode sessions       # List sessions with context stats
 rlm-opencode status         # Server status + active configuration
 rlm-opencode clear --all    # Clear all sessions and logs
+
+# Document Management (Layer 1 & 2 RAG)
+rlm-opencode docs list                 # List all registered documents
+rlm-opencode docs add <tag> <file>     # Register a specific file
+rlm-opencode docs import-dir <dir>     # Bulk-import a directory (creates tags based on filenames)
+rlm-opencode docs remove <tag>         # Unregister a document
+rlm-opencode docs index                # Re-build semantic embeddings for all documents
+rlm-opencode docs search "<query>"     # Test semantic vector search via CLI
 ```
 
 ## Session Data
